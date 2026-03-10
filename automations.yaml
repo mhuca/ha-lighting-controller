@@ -1376,7 +1376,6 @@
   triggers:
   - entity_id:
     - binary_sensor.living_room_presence_occupancy
-    - binary_sensor.basement_true_occupancy
     to:
     - 'off'
     for:
@@ -1387,9 +1386,26 @@
     - binary_sensor.living_room_presence_occupancy
     - binary_sensor.basement_true_occupancy
     to:
+    - 'off'
+    for:
+      minutes: 5
+    trigger: state
+    id: Occupancy_Clear
+    enabled: false
+  - entity_id:
+    - binary_sensor.living_room_presence_occupancy
+    to:
     - 'on'
     trigger: state
     id: Occupancy_Detected
+  - entity_id:
+    - binary_sensor.living_room_presence_occupancy
+    - binary_sensor.basement_true_occupancy
+    to:
+    - 'on'
+    trigger: state
+    id: Occupancy_Detected
+    enabled: false
   conditions: []
   actions:
   - variables:
@@ -2224,62 +2240,21 @@
   conditions:
   - condition: template
     value_template: "{{ trigger.to_state.state not in ['none', 'unknown', 'unavailable']\n
-      \  and trigger.from_state.state != trigger.to_state.state }}\n"
+      \  and trigger.from_state.state != trigger.to_state.state \n   and trigger.to_state.context.user_id
+      is none \n   and trigger.to_state.context.parent_id is none }}\n"
   actions:
   - variables:
       source_entity: '{{ trigger.to_state.state }}'
       area_key: '{{ area_id(source_entity) | default(''none'') }}'
       src: '{{ states[source_entity] }}'
-  - condition: template
-    value_template: '{{ src.context.user_id is none and src.context.parent_id is none
-      }}
-
-      '
   - event: universal_controller_command
     event_data:
       action_type: light_override
       area_key: '{{ area_key }}'
-      command_input: '{{ src.state }}'
+      command_input: '{{ states[source_entity].state }}'
       data_payload: '{{ src }}'
   mode: parallel
   max: 20
-- id: override_expiry_sweeper
-  alias: 'Override: Expiry Sweeper'
-  description: ''
-  triggers:
-  - minutes: /30
-    trigger: time_pattern
-  actions:
-  - variables:
-      data: '{{ state_attr(''sensor.active_area_overrides'', ''override_expiry'')
-        or {} }}'
-      now_ts: '{{ now().timestamp() | int }}'
-  - repeat:
-      for_each: '{{ data.items() | list }}'
-      sequence:
-      - variables:
-          area_key: '{{ repeat.item[0] }}'
-          expiry: '{{ repeat.item[1] | int }}'
-      - if:
-        - condition: template
-          value_template: '{{ expiry <= now_ts }}'
-        then:
-        - event: universal_controller_command
-          event_data:
-            action_type: light_call
-            area_key: '{{ area_key }}'
-            command_input: turn_off
-            action_value: ''
-            target_label: []
-            source_device: override_expiry
-            data_payload: {}
-        - event: universal_controller_command
-          event_data:
-            action_type: light_override
-            area_key: '{{ area_key }}'
-            command_input: 'off'
-            data_payload: {}
-  mode: single
 - id: '1773168023699'
   alias: 'Override: Infer from Pico Light Call'
   description: Use Pico turn_on/turn_off in override-eligible areas to toggle override
@@ -2304,15 +2279,15 @@
     event_data:
       action_type: light_override
       area_key: '{{ area_key }}'
-      command_input: '{{ "on" if cmd == "turn_on" else "off" }}'
+      command_input: '{{ ''on'' if cmd == ''turn_on'' else ''off'' }}'
       data_payload: '{{ trigger.event.data }}'
   mode: parallel
 - id: '1773168077335'
   alias: 'Override: Expiry Sweeper'
   description: ''
   triggers:
-  - minutes: /15
-    trigger: time_pattern
+  - trigger: time_pattern
+    hours: /1
   actions:
   - variables:
       data: '{{ state_attr(''sensor.active_area_overrides'', ''override_expiry'')

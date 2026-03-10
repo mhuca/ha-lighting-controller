@@ -1,5 +1,0 @@
-
-sensor:
-  - name: Active Override Source
-    unique_id: active_override_source
-    state: >

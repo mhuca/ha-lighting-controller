@@ -28,3 +28,24 @@ sensor:
             {{ current }}
           {% endif %}
         {% endif %}
+    
+      override_expiry: >
+        {% set current = state_attr('sensor.active_area_overrides', 'override_expiry') or {} %}
+        {% set area_key = trigger.event.data.area_key %}
+        {% set cmd = trigger.event.data.command_input | replace('turn_', '') %}
+        {% set duration = (2 * 3600) | int %}
+
+        {% if cmd == 'on' %}
+          {% set expiry = (now().timestamp() + duration) | int %}
+          {{ dict(current, **{area_key: expiry}) }}
+        {% elif cmd == 'off' %}
+          {# Rebuild dict without the specific area key #}
+          {% set ns = namespace(res={}) %}
+          {% for k, v in current.items() if k != area_key %}
+            {% set ns.res = dict(ns.res, **{k: v}) %}
+          {% endfor %}
+          {{ ns.res }}
+        {% else %}
+          {{ current }}
+        {% endif %}
+
