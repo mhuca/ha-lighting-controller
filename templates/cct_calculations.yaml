@@ -1,0 +1,50 @@
+sensor:
+  - name: "CCT Logic Core"
+    unique_id: cct_logic_core
+    unit_of_measurement: "K"
+    state: |
+      {% set elev = state_attr('sun.sun', 'elevation') | float(0) %}
+      {% set now_dt = now().strftime('%H:%M') %}
+      {% set temp_min = states('input_number.cct_min') | int(2000) %}
+      {% set temp_max = states('input_number.cct_max') | int(5500) %}
+      {% set temp_base = 3200 %}
+      {% if is_state('binary_sensor.party_mode_active', 'on') %}
+        {% set wind_down_start = '01:00' %}
+      {% elif is_state('binary_sensor.guest_mode_active', 'on') %}
+        {% set wind_down_start = '00:00' %}
+      {% else %}
+        {% set wind_down_start = '21:30' %}
+      {% endif %}
+      {% set start_dt = today_at(wind_down_start) %}
+      {% set end_time = (start_dt + timedelta(minutes=90)).strftime('%H:%M') %}
+      {% if now_dt >= end_time or (now_dt < '05:00' and wind_down_start != '01:00') %}
+        {{ temp_min }}
+      {% elif now_dt >= wind_down_start %}
+        {% set seconds_past_start = (now() - start_dt).total_seconds() %}
+        {% set progress = (seconds_past_start / 5400 ) * (pi / 2) %}
+        {{ (temp_min + (temp_base - temp_min) * cos(progress)) | int }}
+      {% elif elev > 15 %}
+        {{ temp_max }}
+      {% elif elev >= 0 and elev <= 15 %}
+        {% set sine_factor = sin((elev * 6) * pi / 180) %}
+        {{ (temp_base + (temp_max - temp_base) * sine_factor) | int }}
+      {% elif elev < 0 and now().hour >= 12 %}
+        {{ temp_base }}
+      {% elif elev < 0 and elev >= -15 and now().hour < 12 %}
+        {% set adjusted_elev = (elev + 15) * 6 %}
+        {% set sine_factor = sin(adjusted_elev * pi / 180) %}
+        {{ (temp_min + (temp_base - temp_min) * sine_factor) | int }}
+      {% else %}
+        {{ temp_min }}
+      {% endif %}
+    attributes:
+      friendly_name: "CCT Logic Core Sensor"
+      icon: "mdi:thermometer"
+      brightness: |
+        {% set temp_min = states('input_number.cct_min') | int(2000) %}
+        {% set temp_max = states('input_number.cct_max') | int(5500) %}
+        
+        {% set bright_min = 115 %}
+        {% set bright_max = 255 %}
+        
+        {{ this.state | int(3200) | remap(temp_min, temp_max, bright_min, bright_max) | int }}

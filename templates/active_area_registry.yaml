@@ -1,0 +1,30 @@
+trigger:
+  - trigger: event
+    event_type: universal_controller_command
+    event_data:
+      action_type: light_override
+sensor:
+  - name: "Active Area Overrides"
+    unique_id: active_area_overrides
+    icon: mdi:shield-lock
+    # The state is just a count of how many overrides are active
+    state: >
+      {{ state_attr('sensor.active_area_overrides', 'overridden_areas') | count if state_attr('sensor.active_area_overrides', 'overridden_areas') else 0 }}
+    attributes:
+      overridden_areas: >
+        {% set current = state_attr('sensor.active_area_overrides', 'overridden_areas') or [] %}
+        {% set area = trigger.event.data.area_key %}
+        {% set cmd = trigger.event.data.command_input | default(none) %}
+
+        {% if cmd is not none %}
+          {% if cmd == 'on' %}
+          {# Add the area to the list if it's not already there #}
+            {{ (current + [area]) | unique | list }}
+          {% elif cmd == 'off' %}
+            {# Remove the area from the list #}
+            {{ current | reject('eq', area) | list }}
+          {% else %}
+            {# Keep the list as is for other event types #}
+            {{ current }}
+          {% endif %}
+        {% endif %}

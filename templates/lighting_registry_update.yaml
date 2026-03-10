@@ -1,0 +1,58 @@
+trigger:
+  - trigger: event
+    event_type: "lighting_registry_update"
+sensor:
+  - name: "Lighting Off Registry"
+    unique_id: lighting_off_registry
+    state: >
+      {{ 'active' if this.attributes.get('active_timers', {}) | count > 0 else 'idle' }}
+    attributes:
+      active_timers: >
+        {% set current = this.attributes.get('active_timers', {}) %}
+        {% set action = trigger.event.data.action %}
+        {% set area = trigger.event.data.area_key %}
+
+        {% if action == 'add' %}
+          {# Universal Entry: Resets state and applies 'skip_warning' flag #}
+          {% set base_time = as_datetime(trigger.event.data.timestamp) | default(now(), true) %}
+          {% set seconds = trigger.event.data.seconds | default(120) %}
+          {% set skip = trigger.event.data.skip_warning | default(false) %}
+          {% set expiry = (base_time + timedelta(seconds=seconds)).isoformat() %}
+          {% set is_locked = current[area].locked if area in current else false %}
+          
+          {{ dict(current, **{area: {'expiry': expiry, 'locked': is_locked, 'warned': false, 'skip_warning': skip}}) }}
+        {% elif action == 'lock' %}
+          {# Privacy/Occupancy Lock: Timer exists but Cleaner will ignore it #}
+          {% if area in current %}
+            {% set entry = current[area] %}
+            {{ dict(current, **{area: dict(entry, locked=true)}) }}
+          {% else %}
+            {{ current }} 
+          {% endif %}
+
+        {% elif action == 'warned' %}
+          {# Stage 1 Expiry: The Dim Warning has been issued, set final 20s fuse #}
+          {% if area in current %}
+            {% set entry = current[area] %}
+            {% set final_expiry = (now() + timedelta(seconds=20)).isoformat() %}
+            {{ dict(current, **{area: dict(entry, expiry=final_expiry, warned=true)}) }}
+          {% else %}
+            {{ current }}
+          {% endif %}
+
+
+        {% elif action == 'remove' %}
+          {# Rebuild the dict by explicitly skipping the target key #}
+          {% set ns = namespace(new={}) %}
+          {% for k, v in current.items() if k != area %}
+            {% set ns.new = dict(ns.new, **{k: v}) %}
+          {% endfor %}
+          {{ ns.new }}
+
+        {% elif action == 'clear_all' %}
+          {# Emergency Flush for IT Operations #}
+          {{ {} }}
+
+        {% else %}
+          {{ current }}
+        {% endif %}

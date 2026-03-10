@@ -1,0 +1,18 @@
+trigger:
+  - trigger: mqtt
+    topic: "home/lighting/+/current_scene"
+sensor:
+  - name: "MQTT Scene Tracker"
+    unique_id: "mqtt_scene_tracker_global"
+    # We store the latest update in attributes, keyed by the area name
+    state: "Active"
+    attributes:
+      data: >
+        {% set current = this.attributes.get('data', {}) %}
+        {% set area = trigger.topic.split('/')[2] %}
+        {% set new_val = trigger.payload | from_json %}
+        {{ dict(current, **{area: new_val}) }}
+        {% set ns = namespace(new={}) %}
+        {% for k, v in current.items() if k != area %}
+          {% set ns.new = dict(ns.new, **{k: v}) %}
+        {% endfor %}

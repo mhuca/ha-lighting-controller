@@ -1,0 +1,785 @@
+living_room_movie:
+  sequence:
+  - alias: Universal Controller Command Event - Living Room Wall Down
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: 120
+      command_input: turn_on
+      target_label:
+      - living_room_wall_down_light
+      area_key: living_room
+      data_payload: ''
+      overrides: {}
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 250
+  - alias: Universal Controller Command Event - Living Room Off
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: ''
+      command_input: turn_off
+      target_label:
+      - living_room_wall_up_light
+      - lamp
+      - main
+      area_key: living_room
+      data_payload: ''
+      overrides: {}
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 250
+  - alias: Universal Controller Command Event - Hallway Off
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: ''
+      command_input: turn_off
+      target_label:
+      - back
+      - bar
+      - ring
+      area_key: hallway
+      data_payload: ''
+      overrides: {}
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 250
+  - alias: Universal Controller Command Event - Dining Room Off
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: ''
+      command_input: turn_off
+      target_label: []
+      area_key: dining_room
+      data_payload: ''
+      overrides: {}
+  alias: Living Room 10. Movie
+  description: ''
+  fields: {}
+living_room_day:
+  sequence:
+  - alias: Universal Controller Command Event - Living Room On
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: 255
+      command_input: turn_on
+      target_label:
+      - Living Room Wall Down Light
+      - Living Room Wall Up Light
+      area_key: living_room
+      data_payload: ''
+      overrides: {}
+  - alias: Universal Controller Command Event - Living Room On
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: 150
+      command_input: turn_on
+      target_label:
+      - lamp
+      - main
+      area_key: living_room
+      data_payload: ''
+      overrides: {}
+  - alias: Universal Controller Command Event - Hallway On
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: '{{ states(''sensor.cct_to_brightness'') | int }}'
+      command_input: turn_on
+      target_label:
+      - bar_servery
+      area_key: hallway
+      data_payload: ''
+      overrides: {}
+  - alias: Universal Controller Command Event - Hallway Off
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: ''
+      command_input: turn_off
+      target_label:
+      - back
+      - coffee bar
+      - ring
+      area_key: hallway
+      data_payload: ''
+      overrides: {}
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 150
+  - alias: Universal Controller Command Event - Dining Room Off
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: ''
+      command_input: turn_off
+      target_label:
+      - main
+      - front
+      area_key: dining_room
+      data_payload: ''
+      overrides: {}
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 150
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 150
+  alias: Living Room 50. Day
+  description: ''
+living_room_entertain:
+  sequence:
+  - alias: Universal Controller Command Event - Living Room On
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: 205
+      command_input: turn_on
+      target_label:
+      - lamp
+      - main
+      area_key: living_room
+      data_payload: ''
+      overrides: {}
+  - alias: Universal Controller Command Event - Living Room On
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: 255
+      command_input: turn_on
+      target_label:
+      - Living Room Wall Down Light
+      - Living Room Wall Up Light
+      area_key: living_room
+      data_payload: ''
+      overrides: {}
+  - alias: Universal Controller Command Event - Hallway On
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: '{{ states(''sensor.cct_to_brightness'') | int }}'
+      command_input: turn_on
+      target_label:
+      - bar_servery
+      area_key: hallway
+      data_payload: ''
+      overrides: {}
+  - alias: Universal Controller Command Event - Hallway Off
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: ''
+      command_input: turn_off
+      target_label:
+      - ring
+      area_key: hallway
+      data_payload: ''
+      overrides: {}
+  - alias: Universal Controller Command Event - Dining Room Off
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: ''
+      command_input: turn_off
+      target_label:
+      - main
+      area_key: dining_room
+      data_payload: ''
+      overrides: {}
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 150
+  - if:
+    - condition: state
+      entity_id: sun.sun
+      state: below_horizon
+    then:
+    - alias: Universal Controller Command Event - Dining Room On
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: 90
+        command_input: turn_on
+        target_label:
+        - front
+        - window
+        area_key: dining_room
+        data_payload: ''
+        overrides: {}
+    else:
+    - alias: Universal Controller Command Event - Dining Room On
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: ''
+        command_input: turn_off
+        target_label:
+        - front
+        area_key: dining_room
+        data_payload: ''
+        overrides: {}
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 150
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 150
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 150
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 150
+  alias: Living Room 80. Entertain
+  description: ''
+living_room_lights_off:
+  alias: Basement Stairs 80. Entertain
+  description: basement_stairs_80_entertain
+  sequence:
+  - alias: UCC Event - Family Lights On
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: 190
+      command_input: turn_on
+      target_label:
+      - main
+      - front
+      - back
+      - lamp
+      - window
+      area_key: family_room
+      data_payload: ''
+      overrides: {}
+  - alias: UCC Event - Basement Kitchen Lights On
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: ''
+      command_input: turn_on
+      target_label: []
+      area_key: basement_kitchen
+      data_payload: ''
+      overrides: {}
+  - alias: UCC Event - Stairs On
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: ''
+      command_input: turn_on
+      target_label: []
+      area_key: basement_stairs
+      data_payload: ''
+      overrides: {}
+basement_stairs_50_media:
+  sequence:
+  - alias: UCC Event - Stairs On
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: 90
+      command_input: turn_on
+      target_label: []
+      area_key: basement_stairs
+      data_payload: ''
+      overrides: {}
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 150
+  - alias: UCC Event - Family Lights On
+    event: universal_controller_command
+    event_data:
+      alias: UCC Event - Family Lights On
+      source_device: light_scene
+      action_type: light_call
+      action_value: 90
+      command_input: turn_on
+      target_label:
+      - lamp
+      - window
+      area_key: family_room
+      data_payload: ''
+      overrides: {}
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 150
+  - alias: UCC Event - Basement Kitchen Lights On
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: 90
+      command_input: turn_on
+      target_label: []
+      area_key: basement_kitchen
+      data_payload: ''
+      overrides: {}
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 150
+  - event: universal_controller_command
+    alias: UCC Event - Family Lights Off
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: 90
+      command_input: turn_off
+      target_label:
+      - main
+      - front
+      - back
+      area_key: family_room
+      data_payload: ''
+      overrides: {}
+  alias: Basement Stairs 50. Media
+  description: ''
+basement_stairs_00_all_off:
+  sequence:
+  - action: light.turn_off
+    metadata: {}
+    target:
+      area_id:
+      - basement_stairs
+      - basement_kitchen
+      - family_room
+      - furnace_room
+      - gym
+      - panel_room
+    data: {}
+    enabled: false
+  - parallel:
+    - alias: Universal Controller Command Event - Living Room Wall Down
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: 120
+        command_input: turn_on
+        target_label:
+        - living_room_wall_down_light
+        area_key: living_room
+        data_payload: ''
+        overrides: {}
+    - alias: Universal Controller Command Event - Living Room Off
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: ''
+        command_input: turn_off
+        target_label:
+        - living_room_wall_up_light
+        - lamp
+        - main
+        area_key: living_room
+        data_payload: ''
+        overrides: {}
+    - alias: Universal Controller Command Event - Hallway Off
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: ''
+        command_input: turn_off
+        target_label:
+        - back
+        - bar
+        - ring
+        area_key: hallway
+        data_payload: ''
+        overrides: {}
+    - alias: Universal Controller Command Event - Dining Room Off
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: ''
+        command_input: turn_off
+        target_label:
+        - main
+        - front
+        area_key: dining_room
+        data_payload: ''
+        overrides: {}
+    enabled: false
+  - repeat:
+      for_each:
+      - basement_stairs
+      - family_room
+      - gym
+      - furnace_room
+      - panel_room
+      - basement_kitchen
+      sequence:
+      - alias: Universal Controller Command Event - Basement
+        event: universal_controller_command
+        event_data:
+          source_device: light_scene
+          action_type: light_call
+          action_value: ''
+          command_input: turn_off
+          target_label: []
+          area_key: '{{ repeat.item }}'
+          data_payload: ''
+          overrides: {}
+      - delay:
+          hours: 0
+          minutes: 0
+          seconds: 0
+          milliseconds: 500
+  fields: {}
+  alias: Basement Stairs 00. All Off
+  description: ''
+basement_stairs_60_media_kitchen:
+  sequence:
+  - parallel:
+    - event: universal_controller_command
+      alias: UCC Event - Family Lights Off
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: 90
+        command_input: turn_off
+        target_label:
+        - main
+        - front
+        - back
+        area_key: family_room
+        data_payload: ''
+        overrides: {}
+    - alias: UCC Event - Family Lights On
+      event: universal_controller_command
+      event_data:
+        alias: UCC Event - Family Lights On
+        source_device: light_scene
+        action_type: light_call
+        action_value: 90
+        command_input: turn_on
+        target_label:
+        - lamp
+        - window
+        area_key: family_room
+        data_payload: ''
+        overrides: {}
+    - alias: UCC Event - Basement Kitchen Lights On
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: 90
+        command_input: turn_on
+        target_label:
+        - lamp
+        area_key: basement_kitchen
+        data_payload: ''
+        overrides: {}
+    - alias: UCC Event - Basement Kitchen Lights On
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: 190
+        command_input: turn_off
+        target_label:
+        - main
+        area_key: basement_kitchen
+        data_payload: ''
+        overrides: {}
+    - alias: UCC Event - Stairs On
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: 90
+        command_input: turn_on
+        target_label: []
+        area_key: basement_stairs
+        data_payload: ''
+        overrides: {}
+  fields: {}
+  alias: Basement Stairs 60. Media & Kitchen
+  description: ''
+living_room_85_entertain_max:
+  sequence:
+  - alias: Universal Controller Command Event - Living Room On
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: 205
+      command_input: turn_on
+      target_label:
+      - lamp
+      - main
+      area_key: living_room
+      data_payload: ''
+      overrides: {}
+  - alias: Universal Controller Command Event - Living Room On
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: 255
+      command_input: turn_on
+      target_label:
+      - living_room_lamps
+      area_key: living_room
+      data_payload: ''
+      overrides: {}
+  - alias: Universal Controller Command Event - Hallway On
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: '{{ states(''sensor.cct_to_brightness'') | int }}'
+      command_input: turn_on
+      target_label:
+      - bar_servery
+      area_key: hallway
+      data_payload: ''
+      overrides: {}
+  - alias: Universal Controller Command Event - Hallway Off
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: ''
+      command_input: turn_off
+      target_label:
+      - ring
+      area_key: hallway
+      data_payload: ''
+      overrides: {}
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 150
+  - if:
+    - condition: state
+      entity_id: sun.sun
+      state: below_horizon
+    then:
+    - alias: Universal Controller Command Event - Dining Room On
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: 190
+        command_input: turn_on
+        target_label:
+        - front
+        - window
+        - main
+        area_key: dining_room
+        data_payload: ''
+        overrides: {}
+    else:
+    - alias: UCC Event - Dining Room Off
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: ''
+        command_input: turn_off
+        target_label:
+        - front
+        - main
+        - window
+        area_key: dining_room
+        data_payload: ''
+        overrides: {}
+      enabled: true
+  - alias: Universal Controller Command Event - Dining Room Off
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: ''
+      command_input: turn_off
+      target_label:
+      - main
+      area_key: dining_room
+      data_payload: ''
+      overrides: {}
+    enabled: false
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 150
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 150
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 150
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 150
+  alias: Living Room 85. Entertain Max
+  description: ''
+living_room_00_lights_off:
+  sequence:
+  - parallel:
+    - alias: Universal Controller Command Event - Dining Room Off
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: ''
+        command_input: turn_off
+        target_label: []
+        area_key: dining_room
+        data_payload: ''
+        overrides: {}
+    - alias: Universal Controller Command Event - Hallway Off
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: ''
+        command_input: turn_off
+        target_label:
+        - back
+        - bar
+        - ring
+        area_key: hallway
+        data_payload: ''
+        overrides: {}
+    - alias: Universal Controller Command Event - Hallway Off
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: ''
+        command_input: turn_off
+        target_label: []
+        area_key: living_room
+        data_payload: ''
+        overrides: {}
+  alias: Living Room 00. Lights Off
+  description: ''
+basement_stairs_50_movie:
+  sequence:
+  - alias: Universal Controller Command Event - Stairs On
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: 90
+      command_input: turn_on
+      target_label: []
+      area_key: basement_stairs
+      data_payload: ''
+      overrides: {}
+  - alias: Universal Controller Command Event - Family Room Window On
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: ''
+      command_input: turn_on
+      target_label:
+      - window
+      area_key: family_room
+      data_payload: ''
+      overrides: {}
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 500
+  - alias: UCC Event - Family Room Lights Off
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: ''
+      command_input: turn_off
+      target_label:
+      - main
+      - front
+      - back
+      - lamp
+      area_key: family_room
+      data_payload: ''
+      overrides: {}
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 500
+  - alias: Universal Controller Command Event - Lights Off
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: ''
+      command_input: turn_off
+      target_label: []
+      area_key: basement_kitchen
+      data_payload: ''
+      overrides: {}
+  fields: {}
+  alias: Basement Stairs 10. Movie
+  description: ''

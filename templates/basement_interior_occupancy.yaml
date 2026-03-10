@@ -1,0 +1,19 @@
+trigger:
+  - trigger: state
+    entity_id:
+      - binary_sensor.basement_kitchen_motion_occupancy
+      - binary_sensor.gym_motion_occupancy
+      - binary_sensor.family_room_presence_radar_still_target
+      - binary_sensor.family_room_presence_radar_moving_target
+      - binary_sensor.family_room_presence_radar_target
+      - binary_sensor.familyroom_motion
+    to: "on"
+
+binary_sensor:
+  - name: "Basement Interior Occupancy"
+    unique_id: basement_interior_occupancy
+    delay_off:
+      minutes: 5
+    device_class: occupancy
+    # We removed the delay_off here because the Lutron handles the 5 mins
+    state: "{{ is_state(trigger.entity_id, 'on')}}"

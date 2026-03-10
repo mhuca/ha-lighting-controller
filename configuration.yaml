@@ -1,0 +1,28 @@
+
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+template: !include_dir_list templates/
+recorder:
+  purge_keep_days: 7       # Keeps 7 days of history instead of 10
+  auto_purge: true        # Cleans up every night at 4:12 AM
+  auto_repack: true       # Compresses the database twice a month
+  exclude:
+    domains:
+      - automation         # Do you really need to see when every automation ran?
+      - updater
+      - scene
+    entity_globs:
+      - sensor.sun* # High-frequency, low-value data
+      - sensor.load_*
+      - sensor.memory_*
+    entities:
+      - sensor.date        # Updates every second/minute but never useful
+      - sensor.time

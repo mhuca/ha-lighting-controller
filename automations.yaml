@@ -1,0 +1,2346 @@
+- id: '1771459793961'
+  alias: 'Bridge Export: Universal Controller Command'
+  description: ''
+  triggers:
+  - event_type: universal_controller_command
+    trigger: event
+    event_data:
+      command_input: broadcast
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.event.data.controller_id is not defined }}'
+  actions:
+  - variables:
+      payload: '{{ dict(trigger.event.data, controller_id = ''lighting_primary'')  |
+        to_json  }}
+
+        '
+  - data:
+      topic: home/universal/bus
+      payload: '{{ payload }}
+
+        '
+    action: mqtt.publish
+- id: '1771460330281'
+  alias: 'Bridge Import: Universal Controller Command'
+  description: ''
+  triggers:
+  - trigger: mqtt
+    options:
+      topic: home/universal/bus
+  conditions:
+  - condition: template
+    value_template: '{{ (trigger.payload | from_json).controller_id != ''lighting_primary''
+      }}'
+  actions:
+  - variables:
+      payload: '{{ trigger.payload }}'
+  - event: universal_controller_command
+    event_data:
+      controller_id: '{{ payload.controller_id }}'
+      source_device: '{{ payload.source_device }}'
+      action_type: '{{  payload.action_type }}'
+      action_value: '{{  payload.action_value }}'
+      command_input: '{{  payload.command_input }}'
+      area_key: '{{  payload.area_key }}'
+      target_label: '{{ payload.target_label }}'
+      data_payload: '{{ payload.data_payload }}'
+- id: '1771474376945'
+  alias: Light Call - Turn On
+  description: ''
+  triggers:
+  - trigger: event
+    id: UCC_Event
+    event_type: universal_controller_command
+    event_data:
+      action_type: light_call
+      command_input: turn_on
+    enabled: true
+  - trigger: event
+    id: eUCC_Event
+    event_type: esphome.universal_controller_command
+    event_data:
+      action_type: light_call
+      command_input: turn_on
+    enabled: true
+  - trigger: mqtt
+    id: MQTT_Message
+    options:
+      topic: home/universal/bus
+      payload: light_call
+      value_template: '{{ value_json.action_type }}'
+  conditions: []
+  actions:
+  - alias: Intent and Context
+    variables:
+      payload: '{{ trigger.payload if trigger.id == ''MQTT_Message'' else trigger.event.data
+        }}'
+      action_val: '{{ payload.action_value | default('''') }}'
+      area_key: '{{ payload.area_key }}'
+      target_kelvin: '{{ states(''sensor.cct_calculation'') | int(3200) }}'
+      val: '{{ payload.target_label | default([], true) }}'
+      target_labels: "{{ ( [val] if val is string else val) \n  | map('label_entities')
+        \n  | sum(start=[]) \n  | unique \n  | list \n}}\n"
+  - alias: Data Constants
+    variables:
+      dim_factor: 20
+      command_map:
+        max:
+          brightness: 255
+        raise:
+          brightness_step: 35
+        lower:
+          brightness_step: -35
+        min:
+          brightness: 25
+        night_mode:
+          brightness: 90
+        day_mode:
+          brightness: 190
+        release:
+          brightness_step: 0
+      payload: {}
+  - alias: Hardware Bucketing and Target Expansion (The "Engine")
+    variables:
+      area_lights: '{{ area_entities(area_key) | select(''match'', ''light.*'') |
+        list }}'
+      target_entities: "{% if target_labels | length > 0 %}\n    {{ area_lights |
+        intersect(target_labels) }}\n  {% else %}\n    {{ area_lights }}\n  {% endif
+        %}\n"
+      target_br: "{% set current_cmd = command_map.get(action_val, {}) %} {% if 'brightness_step'
+        in current_cmd %}\n  {{ 255 if current_cmd.brightness_step > 0 else 1 }}\n{%
+        elif action_val is number or (action_val | is_number) %}\n  {{ ([0, action_val
+        | int, 255] | sort)[1] }}\n{% else %}\n  {{ current_cmd.get('brightness',
+        190) }}\n{% endif %}\n"
+      step_val: '{{ command_map.get(action_val, {}).get(''brightness_step'', 0) }}'
+      ikea_cct_lights: "{% set ns = namespace(to_update=[]) %} \n{% for l in states.light
+        \n  | selectattr('entity_id', 'in', target_entities) \n    if l.attributes.get('max_color_temp_kelvin',
+        0) | int <= 4000 \n   and 'color_temp' in l.attributes.get('supported_color_modes',
+        []) %}\n      {% set cur_k = l.attributes.get('color_temp_kelvin', 0) | int(0)
+        %}\n      {% set cur_br = l.attributes.get('brightness', 0) | int(0) %}\n
+        \     {% set clamped_k = ([l.attributes.get('min_color_temp_kelvin', 2202)
+        | int, target_kelvin, 4000] | sort)[1] %}\n      {% if (cur_k - clamped_k)
+        | abs > 50 or (cur_br - target_br) | abs > 3 %}\n        {% set ns.to_update
+        = ns.to_update + [l.entity_id] %}\n      {% endif %}\n{% endfor %} {{ ns.to_update
+        }}\n"
+      standard_cct_lights: "{% set ns = namespace(to_update=[]) %} {% for l in states.light
+        | selectattr('entity_id', 'in', target_entities) \n   if l.entity_id not in
+        ikea_cct_lights\n   and 'color_temp' in l.attributes.get('supported_color_modes',
+        []) %}\n  {% set cur_k = l.attributes.get('color_temp_kelvin', 0) | int(0)
+        %}\n  {% set cur_br = l.attributes.get('brightness', 0) | int(0) %}\n  {%
+        set min_hw = l.attributes.get('min_color_temp_kelvin', 2200) | int %}\n  {%
+        set max_hw = l.attributes.get('max_color_temp_kelvin', 7000) | int %}\n  {%
+        set clamped_k = ([min_hw, target_kelvin, max_hw] | sort)[1] %}\n  {% if (cur_k
+        - clamped_k) | abs > 50 or (cur_br - target_br) | abs > 3 %}\n    {% set ns.to_update
+        = ns.to_update + [l.entity_id] %}\n  {% endif %}\n{% endfor %} {{ ns.to_update
+        }}\n"
+      dimmer_lights: "{{ target_entities \n  | intersect(label_entities('CurrentCTDimmer'))
+        \n  | list }}\n"
+      binary_lights: "{% set all_binary_lights = states.light \n    | selectattr('attributes.supported_color_modes',
+        'defined')\n    | selectattr('attributes.supported_color_modes', 'eq', ['onoff'])\n
+        \   | map(attribute='entity_id') | list %}\n{{ target_entities | intersect(all_binary_lights)
+        }}\n"
+      excluded: '{{ ikea_cct_lights + standard_cct_lights + dimmer_lights + binary_lights
+        | list | default([]) }}'
+      standard_lights: "{{ target_entities \n  | reject('in', excluded ) \n  | list
+        }}\n"
+  - parallel:
+    - alias: IKEA CCT Turn On
+      if:
+      - condition: template
+        value_template: '{{ ikea_cct_lights | length > 0 }}'
+      then:
+      - action: light.turn_on
+        target:
+          entity_id: '{{ ikea_cct_lights }}'
+        data: '{% set base_data = {''color_temp_kelvin'': target_kelvin} %}
+
+          {{ dict(base_data, brightness_step=step_val) if step_val != 0 else dict(base_data,
+          brightness=target_br) }}
+
+          '
+    - alias: Standard CCT Turn On
+      if:
+      - condition: template
+        value_template: '{{ standard_cct_lights | length > 0 }}'
+      then:
+      - action: light.turn_on
+        target:
+          entity_id: '{{ standard_cct_lights }}'
+        data: '{% set base_data = {''color_temp_kelvin'': target_kelvin} %} {{ dict(base_data,
+          brightness_step=step_val) if step_val != 0 else dict(base_data, brightness=target_br)
+          }}
+
+          '
+    - alias: Dimmer Lights Turn On
+      if:
+      - condition: template
+        value_template: '{{ dimmer_lights | length > 0 }}'
+      then:
+      - action: light.turn_on
+        target:
+          entity_id: '{{ dimmer_lights }}'
+        data:
+          brightness: '{{ states(''sensor.cct_to_brightness'') | int(150) }}'
+    - alias: Binary Lights Turn On
+      if:
+      - condition: template
+        value_template: '{{ binary_lights | length > 0 }}'
+      then:
+      - action: light.turn_on
+        target:
+          entity_id: '{{ binary_lights }}'
+        data: {}
+    - alias: Standard Lights Turn On
+      if:
+      - condition: template
+        value_template: '{{ standard_lights | length > 0 }}'
+      then:
+      - action: light.turn_on
+        target:
+          entity_id: '{{ standard_lights }}'
+        data: '{% set base_data = {} %}
+
+          {{ dict(base_data, brightness_step=step_val) if step_val != 0 else dict(base_data,
+          brightness=target_br) }}
+
+          '
+  - action: logbook.log
+    data:
+      name: Light Engine (On)
+      message: 'Light Call Source: {{ payload.source_device | default('''') }} | Area:
+        {{ area_key }} | Label: {{ val[0] | default(''All'') }} | color_temp_kelvin:
+        {{ target_kelvin }} {{this.entity_id}}'
+      entity_id: sensor.ucc_registry_log
+  mode: queued
+  max: 20
+- id: '1771475160937'
+  alias: Light Call - Turn Off
+  description: ''
+  triggers:
+  - trigger: event
+    id: UCC_Event
+    event_type: universal_controller_command
+    event_data:
+      action_type: light_call
+      command_input: turn_off
+    enabled: true
+  - trigger: event
+    id: eUCC_Event
+    event_type: esphome.universal_controller_command
+    event_data:
+      action_type: light_call
+      command_input: turn_off
+    enabled: true
+  - trigger: mqtt
+    id: MQTT_Message
+    options:
+      topic: home/universal/bus
+      payload: light_call
+      value_template: '{{ value_json.action_type }}'
+  conditions: []
+  actions:
+  - alias: Define Actions
+    variables:
+      payload: '{{ trigger.payload if trigger.id == ''MQTT_Message'' else trigger.event.data
+        }}'
+      area_key: '{{ payload.area_key }}'
+      command: '{{ payload.command_input }}'
+      action_type: '{{ payload.action_type }}'
+      action_value: '{{ payload.action_value }}'
+  - variables:
+      transition: 0.2
+      labels: "{{ trigger.event.data.target_label \n  | lower \n  | default([], true)\n}}\n"
+      target_labels: "{{ ( [labels] if labels is string else labels ) \n  | map('label_entities')
+        \n  | sum(start=[]) \n  | unique \n  | list \n}}\n"
+      is_whole_area: '{{ labels | length == 0 }}'
+      area_lights: '{{ area_entities(area_key) | select(''match'', ''light.*'') |
+        list }}'
+      expanded_targets: '{{ area_lights | intersect(target_labels) if target_labels
+        | length > 0 else area_lights }}
+
+        '
+      final_targets: "{{ states.light \n  | selectattr('entity_id', 'in', expanded_targets)
+        \n  | rejectattr('state', 'eq', 'off') \n  | map(attribute='entity_id') \n
+        \ | list }}\n"
+      final_target_data: "{% if is_whole_area %}\n  {{ {\"area_id\": area_key} }}\n{%
+        else %}\n  {{ {\"entity_id\": final_targets} }}\n{% endif %}\n"
+  - if:
+    - condition: template
+      value_template: '{{ final_target_data.area_id is defined or (final_target_data.entity_id
+        is defined and final_target_data.entity_id | length > 0) }}'
+    then:
+    - action: light.turn_off
+      target: '{{ final_target_data }}'
+      data: {}
+    - action: logbook.log
+      data:
+        name: Light Engine (Off)
+        message: 'Turned off {{ final_targets | length }} lights in {{ area_key }}.
+          (Source: {{ payload.source_device | default('''') }}) {{this.entity_id}}'
+        entity_id: sensor.ucc_registry_log
+    else:
+    - alias: Silent Skip
+      stop: All target lights are already off. Mesh silenced.
+  mode: queued
+  max: 20
+- id: '1771475504554'
+  alias: Command - Light Scene Cycle
+  description: Handles scene rotation using Raise/Lower/Max/Min/Next
+  triggers:
+  - trigger: event
+    id: UCC_Event
+    event_type: universal_controller_command
+    event_data:
+      action_type: scene_cycle
+  - trigger: mqtt
+    id: MQTT_Message
+    options:
+      topic: home/universal/bus
+      payload: scene_cycle
+      value_template: '{{ value_json.action_type }}'
+  actions:
+  - variables:
+      payload: '{{ trigger.payload if trigger.id == ''MQTT_Message'' else trigger.event.data
+        }}'
+      area_key: '{{ payload.area_key }}'
+      command_input: '{{ payload.command_input }}'
+      intent: "{% if command_input == 'turn_off' %}\n  off\n{% elif payload.action_value
+        == '' %}\n  max\n{% else %}\n  {{ payload.action_value }}\n{% endif %}\n"
+      options: "{{ states.script \n   | selectattr('entity_id', 'in', area_entities(area_key))\n
+        \  | selectattr('entity_id', 'in', label_entities('lighting'))\n   | map(attribute='entity_id')
+        | list | sort }}\n"
+      state_topic: home/lighting/{{ area_key }}/current_scene
+      all_states: '{{ state_attr(''sensor.mqtt_scene_tracker'', ''data'') | default({},
+        true) }}'
+      current_state_obj: '{{ all_states.get(area_key, {''state'': options[0], ''last_changed'':
+        as_datetime(0).isoformat()}) }}'
+      current_script: '{{ current_state_obj.state }}'
+      last_changed: '{{ current_state_obj.last_changed }}'
+      current_idx: '{{ options.index(current_script) if current_script in options
+        else -1 }}'
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ intent == ''max'' }}'
+      sequence:
+      - variables:
+          idx: '{{ -1 | int }}'
+      alias: Maximum - Max
+    - conditions:
+      - condition: template
+        value_template: '{{ intent in [''next'', ''raise''] }}'
+      sequence:
+      - variables:
+          idx: '{{ -1 if current_idx >= (options | length - 1) else current_idx +
+            1 }}'
+      alias: Next - Raise
+    - conditions:
+      - condition: template
+        value_template: '{{ intent in [''lower'',''previous''] }}'
+      sequence:
+      - variables:
+          idx: '{{ 0 if current_idx <= 0 else current_idx - 1 }}'
+      alias: Previous - Lower
+    - conditions:
+      - condition: template
+        value_template: '{{ intent == ''min'' }}'
+      sequence:
+      - variables:
+          idx: '{{ 1 | int }}'
+      alias: Minimum -  Min
+    - conditions:
+      - condition: template
+        value_template: '{{ intent == ''off'' }}'
+      sequence:
+      - variables:
+          idx: '{{ 0 | int }}'
+      alias: 'Off'
+    default:
+    - variables:
+        idx: '{{ 1 | int }}'
+  - action: script.turn_on
+    target:
+      entity_id: '{{ options[idx] }}'
+    data: {}
+  - action: mqtt.publish
+    data:
+      topic: '{{ state_topic }}'
+      payload: "{{ {\n  \"state\": options[idx],\n  \"last_changed\": now().isoformat()\n}
+        | to_json }}"
+      retain: true
+  - action: logbook.log
+    data:
+      name: Light Scene
+      message: 'Light Scene: {{ options[idx]}} by: {{ payload.source_device }} | Area:
+        {{ area_key }}'
+      entity_id: sensor.ucc_registry_log
+  - if:
+    - condition: template
+      value_template: '{{ current_idx != idx }}'
+    then: []
+  mode: parallel
+- id: '1771536475110'
+  alias: 'Adaptive Lighting: Sync Active CCT & Dimmer Targets'
+  description: Syncs active lights to solar targets with deadzone checks to minimize  network
+    chatter and accommodate legacy hardware.
+  triggers:
+  - trigger: state
+    entity_id: sensor.cct_calculation
+    id: target_change
+    for: 00:00:10
+  actions:
+  - variables:
+      target_kelvin: '{{ states(''sensor.cct_calculation'') | int(3200) }}'
+      target_br_dimmer: '{{ states(''sensor.cct_to_brightness'') | int(150) }}'
+      native_cct_targets: "{% set ns = namespace(targets=[]) %}\n{% for l in states.light
+        | selectattr('state', 'eq', 'on') %}\n  {% set modes = l.attributes.get('supported_color_modes',
+        []) %}\n  {% if 'color_temp' in modes %}\n    {% set cur_k = l.attributes.get('color_temp_kelvin',
+        0) | int(0) %}\n    {% set min_k = l.attributes.get('min_color_temp_kelvin',
+        2000) | int(2000) %}\n    {% set max_k = l.attributes.get('max_color_temp_kelvin',
+        9000) | int(9000) %}\n    {% if (cur_k - target_kelvin) | abs > 50 \n       and
+        target_kelvin >= min_k \n       and target_kelvin <= max_k %}\n      {% set
+        ns.targets = ns.targets + [l.entity_id] %}\n    {% endif %}\n  {% endif %}\n{%
+        endfor %}\n{{ ns.targets }}\n"
+      dimmer_targets: "{% set ns = namespace(targets=[]) %}\n{% set labeled = label_entities('CurrentCTDimmer')
+        %}\n{% for l in states.light | selectattr('entity_id', 'in', labeled) | selectattr('state',
+        'eq', 'on') %}\n  {% set cur_br = l.attributes.get('brightness', 0) | int
+        %}\n  {% if (cur_br - target_br_dimmer) | abs > 5 %}\n    {% set ns.targets
+        = ns.targets + [l.entity_id] %}\n  {% endif %}\n{% endfor %}\n{{ ns.targets
+        }}\n"
+  - parallel:
+    - alias: Update Native Kelvin Lights
+      if:
+      - condition: template
+        value_template: '{{ native_cct_targets | length > 0 }}'
+      then:
+      - action: light.turn_on
+        target:
+          entity_id: '{{ native_cct_targets }}'
+        data:
+          color_temp_kelvin: '{{ target_kelvin }}'
+    - alias: Update Dim-2-Temp Groups (Legacy Compatible)
+      if:
+      - condition: template
+        value_template: '{{ dimmer_targets | length > 0 }}'
+      then:
+      - action: light.turn_on
+        target:
+          entity_id: '{{ dimmer_targets }}'
+        data:
+          brightness: '{{ target_br_dimmer }}'
+- id: '1771546449673'
+  alias: Switch Amryl Office Main Switch Event
+  description: Single press detection for Amryl Office Main Light
+  triggers:
+  - trigger: mqtt
+    options:
+      topic: zigbee2mqtt/+
+  conditions:
+  - condition: template
+    value_template: "{% set payload = trigger.payload_json %}\n{{ payload.action is
+      defined and \n   payload.detach_relay_mode is defined and \n   payload.detach_relay_mode
+      == true }}\n"
+  actions:
+  - variables:
+      payload: '{{ trigger.payload_json }}'
+      device_name: '{{ trigger.topic.split(''/'')[1] }}'
+      area_key: '{{ device_name.lower().replace(''relay'', '''').strip().replace(''
+        '', ''_'') }}'
+      target_light: "{{ label_entities('main') \n   | select('match', 'light\\.')\n
+        \  | select('in', area_entities(area_key)) \n   | first | default('none')
+        }}\n"
+      intended_command: '{{ ''turn_off'' if is_state(target_light, ''on'') else ''turn_on''
+        }}'
+  - condition: template
+    value_template: '{{ target_light != ''none'' }}'
+  - alias: Emit Generic Universal Controller Command Event
+    event: universal_controller_command
+    event_data:
+      source_device: z2m_physical_rocker
+      action_type: light_call
+      action_value: ''
+      command_input: '{{ intended_command }}'
+      target_label:
+      - main
+      area_key: '{{ area_key }}'
+      data_payload: '{{ payload }}'
+      overrides: {}
+  - data:
+      name: UCC_SENT
+      message: 'Area: {{ area_key }} | Action: light_call | Value: {{ target_light
+        }}'
+      entity_id: sensor.ucc_registry_log
+    action: logbook.log
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 250
+  mode: single
+- id: '1771584229704'
+  alias: Powder Room Presence Logic (Dim Warning)
+  description: ''
+  triggers:
+  - entity_id: binary_sensor.powder_room_motion
+    to: 'on'
+    trigger: state
+    id: Motion_On
+  - entity_id:
+    - binary_sensor.powder_room_motion
+    to:
+    - 'off'
+    trigger: state
+    id: Motion_Off
+    for:
+      hours: 0
+      minutes: 15
+      seconds: 0
+  - entity_id:
+    - binary_sensor.powder_room_door
+    trigger: state
+    to:
+    - 'on'
+    id: Door_Open
+  - entity_id:
+    - binary_sensor.powder_room_door
+    trigger: state
+    to:
+    - 'off'
+    id: Door_Closed
+  - trigger: state
+    entity_id:
+    - switch.powder_room_relay
+    id: Manual_Toggle
+    from:
+    to:
+  conditions: []
+  actions:
+  - parallel:
+    - choose:
+      - conditions:
+        - condition: trigger
+          id:
+          - Motion_On
+          - Door_Open
+        - condition: template
+          value_template: '{% set current = state_attr(''sensor.active_area_overrides'',
+            ''overridden_areas'') or [] %}
+
+            {{ not ''powder_room'' in current }}'
+        sequence:
+        - alias: Emit Generic Universal Controller Command Event
+          event: universal_controller_command
+          event_data:
+            source_device: presence
+            action_type: light_call
+            action_value: '{{ ''night_mode'' if is_state(''binary_sensor.night_light_sensor''
+              ,''on'') else ''day_mode'' }}
+
+              '
+            area_key: powder_room
+            command_input: turn_on
+            target_label:
+            - main
+            data_payload: '{{ trigger }}'
+            overrides: {}
+        - alias: IsDoorOpen
+          if:
+          - condition: state
+            entity_id: binary_sensor.powder_room_door
+            state:
+            - 'on'
+          then:
+          - delay:
+              hours: 0
+              minutes: 2
+              seconds: 0
+              milliseconds: 0
+          - alias: Emit Generic Universal Controller Command Event
+            event: universal_controller_command
+            event_data:
+              source_device: presence
+              action_type: light_call
+              action_value: ''
+              command_input: turn_off
+              target_label:
+              - main
+              area_key: powder_room
+              data_payload: '{{ trigger }}'
+              overrides: {}
+          - event: universal_controller_command
+            event_data:
+              action_type: light_override
+              area_key: powder_room
+              command_input: 'off'
+              data_payload: '{{ trigger.to_state }}'
+          else:
+          - stop: Sequence complete - Door Closed
+      - conditions:
+        - condition: trigger
+          id:
+          - Door_Closed
+        sequence:
+        - delay:
+            hours: 0
+            minutes: 0
+            seconds: 5
+            milliseconds: 0
+        - alias: Wait for Motion
+          wait_template: '{{ is_state(''binary_sensor.powder_room_fan_motion'', ''on'')
+            }}'
+          timeout: 00:00:20
+          continue_on_timeout: true
+        - condition: template
+          value_template: '{{ wait.remaining == 0 }}'
+        - alias: Emit Generic Universal Controller Command Event
+          event: universal_controller_command
+          event_data:
+            source_device: presence
+            action_type: light_call
+            action_value: min
+            command_input: turn_on
+            target_label:
+            - main
+            area_key: powder_room
+            data_payload: '{{ trigger }}'
+            overrides: {}
+        - alias: Wait for Motion
+          wait_template: '{{ is_state(''binary_sensor.powder_room_fan_motion'', ''on'')
+            }}'
+          timeout: 00:00:10
+          continue_on_timeout: true
+        - condition: template
+          value_template: '{{ not wait.completed }}'
+        - alias: Emit Generic Universal Controller Command Event
+          event: universal_controller_command
+          event_data:
+            source_device: presence
+            action_type: light_call
+            action_value: ''
+            command_input: turn_off
+            target_label:
+            - main
+            area_key: powder_room
+            data_payload: '{{ trigger }}'
+            overrides: {}
+      - conditions:
+        - condition: trigger
+          id: Manual_Toggle
+        - condition: template
+          value_template: '{{ trigger.to_state.context.user_id is none and trigger.to_state.context.parent_id
+            is none }}'
+        sequence:
+        - event: universal_controller_command
+          event_data:
+            action_type: light_override
+            area_key: powder_room
+            command_input: 'on'
+            data_payload: '{{ trigger.to_state }}'
+    - if:
+      - condition: trigger
+        id:
+        - Door_Open
+      then:
+      - event: universal_controller_command
+        event_data:
+          action_type: light_override
+          area_key: powder_room
+          command_input: 'off'
+          data_payload: '{{ trigger.to_state }}'
+  mode: restart
+- id: '1771586583381'
+  alias: Lutron Pico - Pico Registry Update
+  description: Single, double, and long press detection
+  triggers:
+  - trigger: event
+    event_type: lutron_caseta_button_event
+    event_data:
+      action: press
+  conditions:
+  - condition: template
+    value_template: '{{ not is_owned or is_expired }}'
+  actions:
+  - event: lutron_button_event
+    event_data:
+      device_id: '{{ device_id }}'
+      isOwned: true
+      owned_ts: '{{ as_timestamp(trigger.event.time_fired) }}'
+  - variables:
+      device_id: '{{ trigger.event.data.device_id | default(''none'') }}'
+      session_id: '{{ trigger.event.context.id | default(''none'') }}'
+      button_type: '{{ trigger.event.data.button_type | default(''unknown'') }}'
+      target_device_name: "{{ trigger.event.data.device_name \n  | lower \n  | replace('
+        ','_') \n  | regex_replace(find='\\\\d+', replace='') \n  | default('unknown')
+        }}\n"
+      serial: '{{ trigger.event.data.serial | default(0) }}'
+      sensor_entity: sensor.pico_config_{{ serial | string }}
+      isCommission: '{{ has_value(sensor_entity) and state_attr(sensor_entity, ''config'')
+        not in [none, '''', ''unknown''] }}'
+      target_label: '{{ [] if target_device_name == ''remote'' else [target_device_name]
+        }}'
+      button_number: '{{ trigger.event.data.button_number | default(0) }}'
+      command_map: '{% set entity = sensor_entity | default(''none'') %} {{ state_attr(entity,
+        ''config'') }}
+
+        '
+  - if:
+    - condition: template
+      value_template: '{{ isCommission }}'
+    then:
+    - alias: Wait for first Release Event... If None After 450ms then it's Hold
+      wait_for_trigger:
+      - event_type: lutron_caseta_button_event
+        event_data:
+          serial: '{{ serial | default(0) }}'
+          device_id: '{{ device_id }}'
+          button_number: '{{ button_number | default(0) }}'
+          action: release
+        id: release_event
+        trigger: event
+      timeout:
+        hours: 0
+        minutes: 0
+        seconds: 0
+        milliseconds: 500
+      continue_on_timeout: true
+    - variables:
+        is_hold: '{{ wait.trigger is none }}'
+    - if:
+      - condition: template
+        value_template: '{{ not is_hold }}'
+      then:
+      - wait_for_trigger:
+        - event_type: lutron_caseta_button_event
+          event_data:
+            serial: '{{ serial | default(0) }}'
+            button_number: '{{ button_number | default(0) }}'
+            action: press
+          id: press_event
+          trigger: event
+        timeout:
+          milliseconds: 250
+        continue_on_timeout: true
+        alias: Wait For Second Press
+      - variables:
+          is_double: '{{ wait.trigger is not none }}'
+      - if:
+        - condition: template
+          value_template: '{{ is_double }}'
+        then:
+        - variables:
+            command: double
+          alias: Dedicated Double Variables
+        else:
+        - variables:
+            command: press
+          alias: Dedicated Press Variables
+      else:
+      - variables:
+          command: hold
+          command_type: "{{ trigger.event.data.button_type  \n  | lower \n  | replace('
+            ', '') \n  | replace('_', '') }}_{{ command }}\n"
+          action_map: '{{ command_map.get(command,{}) }}'
+          cmd: '{{ action_map.get(button_number | string , {}) }}'
+        alias: Dedicated Hold Variables
+      - variables:
+          repeat_delay: '{{ 125 if cmd.type == ''media_call'' else 500 }}'
+          max_hold_time: 9
+          max_iterations: '{{ (max_hold_time / (repeat_delay / 1000)) | round(0) }}'
+        alias: Dedicated Repeat Variables
+      - repeat:
+          until:
+          - condition: template
+            value_template: '{{ wait.trigger is not none or repeat.index > max_iterations
+              }}'
+          sequence:
+          - alias: Hold Event
+            event: universal_controller_command
+            event_data:
+              source_device: pico
+              action_type: '{{ cmd.type | default(none) }}'
+              action_value: '{{ cmd.value | default(none) }}'
+              command_input: '{{ cmd.action | default(none) }}'
+              area_key: '{{ area_id(device_id) | default(none) }}'
+              target_label: '{{ target_label }}'
+              session_id: '{{ session_id }}'
+              data_payload: '{{ trigger.event.data }}'
+              overrides: '{}'
+              command: '{{ command }}'
+              command_type: '{{ command_type }}'
+            enabled: true
+          - wait_for_trigger:
+            - event_type: lutron_caseta_button_event
+              event_data:
+                serial: '{{ serial | default(0) }}'
+                device_id: '{{ device_id }}'
+                button_number: '{{ button_number | default(0) }}'
+                action: release
+              trigger: event
+            timeout:
+              hours: 0
+              minutes: 0
+              seconds: 0
+              milliseconds: '{{ repeat_delay | int }}'
+            continue_on_timeout: true
+          - variables:
+              is_hold: '{{ wait.trigger is none }}'
+              hold_duration: '{% set end = as_timestamp(wait.trigger.event.time_fired)
+                if wait.trigger is not none else as_timestamp(now()) %} {{ (end -
+                start_ts) | round(3) }}
+
+                '
+        enabled: true
+      - variables:
+          command: release
+    - variables:
+        command_type: "{{ trigger.event.data.button_type  \n  | lower \n  | replace('
+          ', '') \n  | replace('_', '') }}_{{ command }}\n"
+        action_map: '{{ command_map.get(command,{}) }}'
+        cmd: '{{ action_map.get(button_number | string , none ) }}'
+    else:
+    - variables:
+        cmd:
+          type: pico_commission
+          value: ''
+          action: broadcast
+  - if:
+    - condition: template
+      value_template: '{{ cmd is not none }}'
+    then:
+    - alias: Press Event
+      event: universal_controller_command
+      event_data:
+        source_device: pico
+        action_type: '{{ cmd.type | default(none) }}'
+        action_value: '{{ cmd.value | default(none) }}'
+        command_input: '{{ cmd.action | default(none) }}'
+        area_key: '{{ area_id(device_id) | default(none) }}'
+        target_label: '{{ target_label }}'
+        session_id: '{{ session_id }}'
+        data_payload: '{{ trigger.event.data }}'
+        overrides: '{}'
+        command: '{{ command }}'
+        command_type: '{{ command_type }}'
+      enabled: true
+    - action: logbook.log
+      data:
+        name: UCC_SENT
+        message: 'Area: {{ area_id(device_id) | default(none) }} | Action: {{cmd.type
+          | default('''') }} | Value: {{cmd.value | default('''') }} | Label: {{ target_label[0]
+          }} | Config: {{sensor_entity | default('''') }}'
+        entity_id: sensor.ucc_registry_log
+  - event: lutron_button_event
+    event_data:
+      device_id: '{{ device_id }}'
+      isOwned: false
+      owned_ts: '{{ as_timestamp(now()) }}'
+  mode: parallel
+  variables:
+    session_id: '{{ trigger.event.context.id }}'
+    sessions: '{{ state_attr(''sensor.pico_registry'', ''active_sessions'') | default({})
+      }}'
+    device_id: '{{ trigger.event.data.device_id | default(''none'') }}'
+    session: '{{ sessions.get(device_id, {}) }}'
+    is_owned: '{{ session.isOwned | default(false) }}'
+    start_ts: '{{ as_timestamp(trigger.event.time_fired) | default(as_timestamp(now()))
+      }}'
+    is_expired: '{{start_ts >= (session.expiry | default(0)) }}'
+  max: 10
+- id: '1771599000710'
+  alias: Override - Mirror Hallway Front Wall Switch
+  description: Locks the first brightness intent and ignores the subsequent ramp noise.
+  triggers:
+  - trigger: state
+    entity_id: light.hallway_front_main
+    attribute: brightness
+  - trigger: state
+    entity_id:
+    - light.hallway_front_main
+    from:
+    to:
+  actions:
+  - variables:
+      target_state: '{{ states(''light.hallway_front_main'') }}'
+      action_value: '{% if target_state == ''off'' %} 0 {% else %} {{ state_attr(''light.hallway_front_main'',
+        ''brightness'') | int(255) }} {% endif %}
+
+        '
+      command_input: turn_{{ target_state }}
+  - alias: Emit Intent Event
+    event: universal_controller_command
+    event_data:
+      source_device: physical_switch_hallway
+      action_type: light_call
+      action_value: '{{ action_value }}'
+      command_input: '{{ command_input }}'
+      target_label:
+      - Front
+      area_key: hallway
+  - data:
+      name: UCC_SENT
+      message: 'Area: {{area_name(trigger.entity_id)}} | Action: light_call | Value:
+        "{{ action_value }} | Label: Front | {{ trigger.entity_id }}'
+      entity_id: sensor.ucc_registry_log
+    action: logbook.log
+  - alias: Ignore the Ramp Noise
+    delay:
+      seconds: 1.5
+  mode: single
+- id: '1771601515250'
+  alias: Mark Office Presence Sensor Changes State
+  description: Native Binary sensor Mark Office Presence Sensor changes State
+  triggers:
+  - trigger: state
+    entity_id:
+    - binary_sensor.mark_office_occupancy
+    to:
+    - 'on'
+    - 'off'
+  conditions:
+  - condition: template
+    value_template: '{% set current = state_attr(''sensor.active_area_overrides'',
+      ''overridden_areas'') or [] %}
+
+      {{ not ''mark_office'' in current }}'
+  actions:
+  - variables:
+      action_value: '{{ 191 if states(''binary_sensor.mark_office_occupancy'') ==
+        ''on'' else '''' }}'
+      command_input: turn_{{ states('binary_sensor.mark_office_occupancy') }}
+      data_payload:
+        entity_id: '{{ trigger.entity_id }}'
+        state: '{{ trigger.to_state.state }}'
+        to_state:
+          attributes: '{{ trigger.to_state.attributes }}'
+          last_changed: '{{ trigger.to_state.attributes }}'
+          last_reported: '{{ trigger.to_state.last_reported }}'
+          last_updated: '{{ trigger.to_state.last_updated }}'
+          context:
+            id: '{{ trigger.to_state.context.id }}'
+  - if:
+    - condition: template
+      value_template: '{{ command_input == ''turn_off'' }}'
+    then:
+    - delay:
+        hours: 0
+        minutes: 0
+        seconds: 30
+        milliseconds: 0
+  - alias: Emit Generic Universal Controller Command Event
+    event: universal_controller_command
+    event_data:
+      source_device: light
+      action_type: light_call
+      action_value: '{{ action_value }}'
+      command_input: '{{ command_input }}'
+      target_label: []
+      area_key: mark_office
+      data_payload: '{{ data_payload }}'
+      overrides: {}
+  mode: restart
+- id: '1771602965801'
+  alias: Dispatcher - Hallway  Kitchen Lights
+  description: Native Binary sensor Hallway Presence changes State
+  triggers:
+  - trigger: state
+    entity_id:
+    - binary_sensor.kitchen_presence_master
+    id: Sensor
+    to:
+    - 'off'
+    - 'on'
+  - trigger: state
+    entity_id:
+    - light.kitchen_island
+    - light.kitchen_main
+    id: Light_Override
+    to:
+    - 'off'
+    - 'on'
+  conditions: []
+  actions:
+  - variables:
+      data_payload:
+        entity_id: '{{ trigger.entity_id }}'
+        state: '{{ trigger.to_state.state }}'
+        to_state:
+          attributes: '{{ trigger.to_state.attributes }}'
+          last_changed: '{{ trigger.to_state.last_changed }}'
+          last_reported: '{{ trigger.to_state.last_reported }}'
+          last_updated: '{{ trigger.to_state.last_updated }}'
+          context:
+            id: '{{ trigger.to_state.context.id }}'
+  - choose:
+    - conditions:
+      - condition: state
+        entity_id: binary_sensor.kitchen_presence_master
+        state: 'on'
+      - condition: state
+        entity_id: binary_sensor.kitchen_light_required
+        state: 'on'
+      sequence:
+      - alias: Emit Generic Universal Controller Command Event
+        event: universal_controller_command
+        event_data:
+          source_device: presence
+          action_type: light_call
+          action_value: '{{ ''night_mode'' if is_state(''binary_sensor.night_light_sensor''
+            ,''on'') else ''day_mode'' }}
+
+            '
+          command_input: turn_on
+          target_label: '{{ [''night_light''] if is_state(''binary_sensor.night_light_sensor''
+            ,''on'') else [''main''] }}
+
+            '
+          area_key: kitchen
+          data_payload: '{{ data_payload }}'
+          overrides: {}
+      - data:
+          name: UCC_SENT
+          message: 'Area: {{ area_name(trigger.entity_id) }} | Action: light_call
+            | Value: {{ ''Night Mode'' if is_state(''binary_sensor.night_light_sensor''
+            ,''on'') else ''Day Mode'' }} | Label: {{ ''Night Light'' if is_state(''binary_sensor.night_light_sensor''
+            ,''on'') else ''Main'' }} {{trigger.entity_id}}'
+          entity_id: sensor.ucc_registry_log
+        action: logbook.log
+    - conditions:
+      - condition: state
+        entity_id: binary_sensor.kitchen_presence_master
+        state:
+        - 'off'
+      - condition: template
+        value_template: '{% set current = state_attr(''sensor.active_area_overrides'',
+          ''overridden_areas'') or [] %}
+
+          {{ not ''kitchen'' in current }}'
+      sequence:
+      - alias: Emit Generic Universal Controller Command Event
+        event: universal_controller_command
+        event_data:
+          source_device: presence
+          action_type: light_call
+          action_value: ''
+          command_input: turn_off
+          target_label: ''
+          area_key: kitchen
+          data_payload: '{{ data_payload }}'
+          overrides: {}
+      - data:
+          name: UCC_SENT
+          message: 'Area: {{ area_name(trigger.entity_id) }} | Action: light_call
+            | Value: Turn_off {{this.entity_id}}{{trigger.entity_id}}'
+          entity_id: sensor.ucc_registry_log
+        action: logbook.log
+    - conditions:
+      - condition: trigger
+        id:
+        - Light_Override
+      - condition: template
+        value_template: '{{ trigger.to_state.context.parent_id is none and trigger.to_state.context.user_id
+          is none }}'
+      sequence:
+      - event: universal_controller_command
+        event_data:
+          action_type: light_override
+          area_key: '{{ area_id(trigger.entity_id) }}'
+          command_input: '{{ trigger.to_state.state }}'
+          data_payload: '{{ trigger.to_state }}'
+      - data:
+          name: UCC_OVERRIDE_SENT
+          message: 'Area: {{ area_id(trigger.entity_id) }} | Action: light_override
+            | Value: {{ trigger.to_state.state }}'
+          entity_id: sensor.ucc_registry_log
+        action: logbook.log
+  mode: queued
+- id: '1771639905319'
+  alias: System - Hardware Transition Surgical Sync
+  description: Sequential idempotency check to minimize mesh chatter
+  triggers:
+  - trigger: homeassistant
+    event: start
+  - trigger: time
+    at: 04:00:00
+  actions:
+  - repeat:
+      for_each: "{{ states.number \n   | selectattr('entity_id', 'search', 'on_transition|off_transition|on_off_transition')
+        \n   | map(attribute='entity_id') | list }}"
+      sequence:
+      - variables:
+          config_id: '{{ config_entry_id(repeat.item) }}'
+          integration: '{{ config_entry_attr(config_id, ''domain'') if config_id else
+            ''unknown'' }}'
+          target_val: '{% if integration == ''mqtt'' %} 10 {% elif integration ==
+            ''matter'' %} 0.1 {% else %} 1 {% endif %}
+
+            '
+          current_val: '{{ states(repeat.item) | float(-1) }}'
+      - if:
+        - condition: template
+          value_template: '{{ (current_val - target_val) | abs > 0.01 }}'
+        then:
+        - action: number.set_value
+          target:
+            entity_id: '{{ repeat.item }}'
+          data:
+            value: '{{ target_val }}'
+        - delay: 00:00:01
+  mode: restart
+- id: '1771699494588'
+  alias: Mapping - Family Room Remotes to Scene Cycle
+  description: Listens to any remote named 'Family Room Remote...' and fires a scene
+    cycle event
+  triggers:
+  - trigger: mqtt
+    options:
+      topic: zigbee2mqtt/Basement Stairs Remote1/action
+  - trigger: mqtt
+    options:
+      topic: zigbee2mqtt/Basement Stairs Remote2/action
+  actions:
+  - variables:
+      payload_map:
+        brightness_step_up: raise
+        brightness_step_down: lower
+        'on': max
+        'off': turn_off
+        toggle: next
+      mapped_action: '{{ payload_map.get(trigger.payload, ''next'') }}'
+  - event: universal_controller_command
+    event_data:
+      action_type: scene_cycle
+      area_key: basement_stairs
+      command_input: '{{ mapped_action }}'
+      action_value: '{{ mapped_action }}'
+  - data:
+      name: UCC_SENT
+      message: 'Area: Basement Stairs | Action: light_call | Value: {{ mapped_action
+        }}'
+      entity_id: sensor.ucc_registry_log
+    action: logbook.log
+  mode: parallel
+- id: '1771704849743'
+  alias: Garage Mud Room Door Event
+  description: Native Garage Mud Room Door Open Timer changes Event
+  triggers:
+  - trigger: state
+    entity_id:
+    - light.mud_room_relay
+    - light.garage_back_relay
+    - light.garage_front_light
+    id: Light_Event
+    alias: Manual Light Event
+  - trigger: state
+    entity_id:
+    - binary_sensor.wesp32_device_mud_room_door_sensor
+    - binary_sensor.garage_person
+    id: Sensor_Event
+    alias: Sensor Events
+  conditions: []
+  actions:
+  - variables:
+      is_active: '{{ trigger.to_state.state in [''on'', ''open''] }}'
+      target_area: '{{ area_id(trigger.entity_id) }}'
+      is_overridden: "{% set current = state_attr('sensor.active_area_overrides',
+        'overridden_areas') or [] %} \n{{ target_area in current }}\n"
+  - choose:
+    - conditions:
+      - condition: trigger
+        id:
+        - Sensor_Event
+      - condition: template
+        value_template: '{{ not is_active and not is_overridden }}'
+      sequence:
+      - delay:
+          hours: 0
+          minutes: 2
+          seconds: 0
+          milliseconds: 0
+      - event: universal_controller_command
+        event_data:
+          source_device: light
+          action_type: light_call
+          action_value: ''
+          area_key: mud_room
+          command_input: turn_off
+          target_label: []
+          data_payload: '{{ trigger }}'
+          overrides: {}
+      - event: universal_controller_command
+        event_data:
+          source_device: light
+          action_type: light_call
+          action_value: ''
+          area_key: garage
+          command_input: turn_off
+          target_label: []
+          data_payload: '{{ trigger }}'
+          overrides: {}
+    - conditions:
+      - condition: trigger
+        id:
+        - Sensor_Event
+      - condition: template
+        value_template: '{{ is_active }}'
+      sequence:
+      - event: universal_controller_command
+        event_data:
+          source_device: light
+          action_type: light_call
+          action_value: ''
+          area_key: '{{ area_id(trigger.entity_id) }}'
+          command_input: turn_on
+          target_label: []
+          data_payload: '{{ trigger }}'
+          overrides: {}
+      - event: universal_controller_command
+        event_data:
+          source_device: light
+          action_type: light_call
+          action_value: ''
+          area_key: garage
+          command_input: turn_on
+          target_label: []
+          data_payload: '{{ trigger }}'
+          overrides: {}
+    - conditions:
+      - alias: Manual Light Event
+        condition: trigger
+        id: Light_Event
+      - condition: template
+        value_template: '{{ trigger.to_state.context.parent_id is none and trigger.to_state.context.user_id
+          is none }}'
+      sequence:
+      - event: universal_controller_command
+        event_data:
+          action_type: light_override
+          area_key: '{{ target_area }}'
+          command_input: '{{ trigger.to_state.state }}'
+          data_payload: '{{ trigger.to_state }}'
+  mode: restart
+- id: '1771721690184'
+  alias: Emit UCC - Door Sensor Triggers Room Light Control
+  description: Native Server Room Door Affect Lights
+  triggers:
+  - alias: Sensor Events
+    trigger: state
+    entity_id:
+    - binary_sensor.wesp32_device_server_room_door_sensor
+    - binary_sensor.wesp32_device_panel_room_door_sensor
+    id: Sensor_Event
+    to:
+  conditions: []
+  actions:
+  - event: universal_controller_command
+    event_data:
+      source_device: light
+      action_type: light_call
+      action_value: ''
+      area_key: '{{ area_id(trigger.entity_id) }}'
+      command_input: turn_{{ trigger.to_state.state | default('on') }}
+      target_label: []
+      data_payload: '{{ trigger }}'
+      overrides: {}
+  - data:
+      name: UCC_SENT
+      message: 'Area: {{ area_id(trigger.entity_id) }} | Action: light_override |
+        Value: {{ trigger.to_state.state }}'
+      entity_id: '{{trigger.entity_id}}'
+    action: logbook.log
+  mode: restart
+- id: '1771722972669'
+  alias: Night Lights Sensor Changes State
+  description: Native Binary sensor Night Lights Sensor changes State
+  triggers:
+  - entity_id:
+    - binary_sensor.night_light_sensor
+    trigger: state
+    to:
+    - 'on'
+  conditions: []
+  actions:
+  - variables:
+      rooms:
+      - living_room@main@lamps
+      - dining_room
+      - hallway
+      - garage
+      - mud_room
+      sweep_areas: '{{ label_areas(''Lights Off'') }}'
+      sweep_entities: '{{ label_entities(''Lights Off'') }}'
+      precision_areas: "{{ sweep_entities \n  | map('area_id') \n  | reject('none')
+        \n  | unique \n  | list }}\n"
+  - alias: Turn Off Kitchen If Empty
+    if:
+    - condition: state
+      entity_id: binary_sensor.hallway_presence
+      state: 'off'
+    then:
+    - event: universal_controller_command
+      event_data:
+        source_device: light
+        action_type: light_call
+        action_value: ''
+        area_key: kitchen
+        command_input: turn_off
+        target_label: []
+        data_payload: '{{ trigger }}'
+        overrides: {}
+      alias: Turn Off Kitchen Lights
+  - if:
+    - condition: state
+      entity_id: binary_sensor.mark_office_presence_sensor_occupancy
+      state:
+      - 'on'
+    then:
+    - event: universal_controller_command
+      event_data:
+        source_device: light
+        action_type: light_call
+        action_value: 190
+        area_key: mark_office
+        command_input: turn_on
+        target_label: []
+        data_payload: '{{ trigger }}'
+        overrides: {}
+      alias: Reset Mark Office Lights
+    else:
+    - event: universal_controller_command
+      event_data:
+        source_device: light
+        action_type: light_call
+        action_value: ''
+        area_key: mark_office
+        command_input: turn_off
+        target_label: []
+        data_payload: '{{ trigger }}'
+        overrides: {}
+      alias: Turn Off Mark Office Lights
+  - event: universal_controller_command
+    event_data:
+      action_type: light_override
+      area_key: mud_room
+      command_input: 'off'
+      data_payload: '{{ trigger.to_state }}'
+    alias: Reset Mud Room Lights Override
+  - event: universal_controller_command
+    event_data:
+      action_type: light_override
+      area_key: garage
+      command_input: 'off'
+      data_payload: '{{ trigger.to_state }}'
+    alias: Reset Garage Lights Override
+  - repeat:
+      for_each: '{{ sweep_areas }}'
+      sequence:
+      - event: universal_controller_command
+        event_data:
+          source_device: light_out
+          action_type: light_call
+          action_value: ''
+          area_key: '{{ repeat.item }}'
+          target_label: []
+          command_input: turn_off
+  - repeat:
+      for_each: '{{ precision_areas }}'
+      sequence:
+      - event: universal_controller_command
+        event_data:
+          source_device: light_out
+          action_type: light_call
+          action_value: ''
+          area_key: '{{ repeat.item }}'
+          target_label:
+          - Lights Off
+          command_input: turn_off
+  - repeat:
+      for_each: '{{ rooms }}'
+      sequence:
+      - alias: Turn Off Living Room Main Lights
+        event: universal_controller_command
+        event_data:
+          source_device: light
+          action_type: light_call
+          action_value: ''
+          area_key: '{{ repeat.item.split(''@'')[0] }}'
+          command_input: turn_off
+          target_label: '{{ repeat.item.split(''@'')[1:] }}'
+          data_payload: '{{ trigger }}'
+          overrides: {}
+    enabled: false
+  mode: single
+- id: '1771744428736'
+  alias: 'Living Room and Basement Lighting '
+  description: ''
+  triggers:
+  - entity_id:
+    - binary_sensor.living_room_presence_occupancy
+    - binary_sensor.basement_true_occupancy
+    to:
+    - 'off'
+    for:
+      minutes: 5
+    trigger: state
+    id: Occupancy_Clear
+  - entity_id:
+    - binary_sensor.living_room_presence_occupancy
+    - binary_sensor.basement_true_occupancy
+    to:
+    - 'on'
+    trigger: state
+    id: Occupancy_Detected
+  conditions: []
+  actions:
+  - variables:
+      area_key: '{{ area_id(trigger.to_state.entity_id) }}'
+      options: "{{ states.script \n   | selectattr('entity_id', 'in', area_entities(area_key))\n
+        \  | selectattr('entity_id', 'in', label_entities('lighting'))\n   | map(attribute='entity_id')
+        | list | sort }}\n"
+      state_topic: home/lighting/{{ area_key }}/current_scene
+      all_states: '{{ state_attr(''sensor.mqtt_scene_tracker'', ''data'') | default({},
+        true) }}'
+      current_state_obj: '{{ all_states.get(area_key, {''state'': options[0], ''last_changed'':
+        as_datetime(0).isoformat()}) }}'
+      current_script: '{{ current_state_obj.state }}'
+      last_changed: '{{ current_state_obj.last_changed }}'
+      current_idx: '{{ options.index(current_script) if current_script in options
+        else -1 }}'
+  - choose:
+    - conditions:
+      - condition: trigger
+        id:
+        - Occupancy_Clear
+      sequence:
+      - action: script.turn_on
+        target:
+          entity_id: '{{ options[0] }}'
+        data: {}
+    - conditions:
+      - condition: trigger
+        id:
+        - Occupancy_Detected
+      sequence:
+      - action: script.turn_on
+        target:
+          entity_id: '{{ options[current_idx] }}'
+        data: {}
+  mode: single
+- id: '1771773995737'
+  alias: Mark Office Relay Switch Changes State
+  description: Native Switch Mark Office Relay Switch changes State
+  triggers:
+  - trigger: homeassistant
+    event: start
+    id: StartUp
+  - trigger: state
+    entity_id:
+    - switch.mark_office_relay
+    - input_boolean.mark_office_lights_state
+    from:
+    to:
+  conditions: []
+  actions:
+  - if:
+    - condition: trigger
+      id:
+      - StartUp
+    then:
+    - delay:
+        hours: 0
+        minutes: 2
+        seconds: 0
+        milliseconds: 0
+  - action: switch.turn_{{ states('input_boolean.mark_office_lights_state') | default('on')
+      }}
+    metadata: {}
+    data: {}
+    target:
+      entity_id:
+      - switch.mark_office_relay
+  mode: single
+- id: '1771774298634'
+  alias: Hallway Back Relay Switch Changes State
+  description: Native Switch Hallway Back Relay Switch changes State
+  triggers:
+  - trigger: state
+    entity_id:
+    - input_boolean.hallway_back_lights_state
+    - switch.hallway_back_relay
+    to:
+    - 'off'
+    - 'on'
+  - trigger: homeassistant
+    event: start
+    id: StartUp
+  conditions: []
+  actions:
+  - if:
+    - condition: trigger
+      id:
+      - StartUp
+    then:
+    - delay:
+        hours: 0
+        minutes: 2
+        seconds: 0
+        milliseconds: 0
+  - action: switch.turn_{{ states('input_boolean.hallway_back_lights_state') | default('on')
+      }}
+    metadata: {}
+    data: {}
+    target:
+      entity_id:
+      - switch.hallway_back_relay
+  mode: single
+- id: '1771774440520'
+  alias: Gym Relay Switch Changes State
+  description: Native Switch Gym Relay Switch changes State
+  triggers:
+  - entity_id:
+    - switch.gym_relay
+    - input_boolean.gym_lights_state
+    trigger: state
+    to:
+    - 'off'
+    - 'on'
+  - trigger: homeassistant
+    event: start
+    id: StartUp
+  conditions: []
+  actions:
+  - if:
+    - condition: trigger
+      id:
+      - StartUp
+    then:
+    - delay:
+        hours: 0
+        minutes: 2
+        seconds: 0
+        milliseconds: 0
+  - action: switch.turn_{{ states('input_boolean.gym_lights_state') | default('on')
+      }}
+    metadata: {}
+    data: {}
+    target:
+      entity_id:
+      - switch.gym_relay
+  mode: single
+- id: '1771775946001'
+  alias: Emit UCC Event - Outside Person Detected
+  description: Controls all lights on the Driveway area based on person detection
+    and night sensors.
+  triggers:
+  - trigger: state
+    entity_id:
+    - binary_sensor.outside_person
+    to:
+    - 'on'
+    - 'off'
+  conditions:
+  - condition: state
+    entity_id: binary_sensor.night_light_sensor
+    state: 'on'
+  actions:
+  - if:
+    - condition: template
+      value_template: '{{ false if states(''binary_sensor.outside_person'') == ''on''
+        else true }}'
+    then:
+    - delay:
+        hours: 0
+        minutes: 2
+        seconds: 0
+        milliseconds: 0
+    alias: Delay for 2:00 If No Detection
+  - alias: Emit UCC Event - Front Porch on Person Detached
+    event: universal_controller_command
+    event_data:
+      source_device: presence
+      action_type: light_call
+      action_value: '{{ 160 if states(''binary_sensor.outside_person'') == ''on''
+        else '''' }}'
+      command_input: turn_{{ states('binary_sensor.outside_person') | default('on')
+        }}
+      target_label: ''
+      area_key: front_porch
+      data_payload: '{{ trigger }}'
+      overrides: {}
+  - data:
+      name: UCC_SENT
+      message: 'Area: {{ area_id(trigger.entity_id) }} | Action: light_call | Value:
+        {{ 160 if states(''binary_sensor.outside_person'') == ''on'' else '''' }}'
+      entity_id: binary_sensor.outside_person
+    action: logbook.log
+  mode: restart
+- id: '1771776308175'
+  alias: Amryl  Office Relay Switch Changes State
+  description: Native Switch Mark Office Relay Switch Changes State
+  triggers:
+  - trigger: homeassistant
+    event: start
+    id: StartUp
+  - trigger: state
+    entity_id:
+    - switch.amryl_office_relay
+    - input_boolean.amryl_office_lights_state
+    from:
+    to:
+  conditions: []
+  actions:
+  - if:
+    - condition: trigger
+      id:
+      - StartUp
+    then:
+    - delay:
+        hours: 0
+        minutes: 2
+        seconds: 0
+        milliseconds: 0
+  - action: switch.turn_{{ states('input_boolean.amryl_office_lights_state') | default('on')
+      }}
+    metadata: {}
+    data: {}
+    target:
+      entity_id:
+      - switch.amryl_office_relay
+  mode: single
+- id: '1771776587703'
+  alias: Daily Lights Sensor Changes State
+  description: Native Binary sensor Daily Lights Sensor changes State
+  triggers:
+  - entity_id:
+    - binary_sensor.daily_lights_sensor
+    trigger: state
+    to:
+    - 'off'
+    - 'on'
+  conditions: []
+  actions:
+  - alias: Emit Generic Universal Controller Command Event
+    event: universal_controller_command
+    event_data:
+      source_device: daily light
+      action_type: light_call
+      action_value: '{{ 65 if states(''binary_sensor.daily_lights_sensor'') | default(''on'')
+        == ''on'' else '''' }}'
+      command_input: turn_{{ states('binary_sensor.daily_lights_sensor') | default('on')
+        }}
+      target_label: []
+      area_key: front_porch
+      data_payload: ''
+      overrides: {}
+  mode: single
+- id: '1771778328334'
+  alias: Override - Mark Office Light Override
+  description: ''
+  triggers:
+  - trigger: event
+    event_type: universal_controller_command
+    event_data:
+      area_key: mark_office
+      action_type: light_call
+      data_payload:
+        serial: 69245923
+  conditions: []
+  actions:
+  - alias: Set Override for Area
+    choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ trigger.event.data.command_type == ''on_double'' }}'
+      sequence:
+      - event: universal_controller_command
+        event_data:
+          action_type: light_override
+          area_key: mark_office
+          command_input: 'on'
+          data_payload: '{{ trigger.to_state }}'
+      alias: Turn On Override
+    - conditions:
+      - condition: template
+        value_template: '{{ trigger.event.data.data_payload.button_type == ''off''}}'
+      sequence:
+      - event: universal_controller_command
+        event_data:
+          action_type: light_override
+          area_key: mark_office
+          command_input: 'off'
+          data_payload: '{{ trigger.to_state }}'
+      alias: Turn Off Override
+  - data:
+      name: UCC_OVERRIDE_SENT
+      message: 'Area: {{area_key}} | Action: {{action_type}} | Profile: {{profile}}'
+      entity_id: sensor.ucc_registry_log
+    action: logbook.log
+  mode: single
+- id: presence_universal_engine
+  alias: 'Presence: Universal Engine'
+  triggers:
+  - value_template: "{{ label_entities('presence') \n   | expand \n   | selectattr('state',
+      'eq', 'on') \n   | list | count > 0 }}\n"
+    trigger: template
+  actions:
+  - variables:
+      triggered_entity: "{{ label_entities('presence') | expand \n   | sort(attribute='last_changed',
+        reverse=true) \n   | map(attribute='entity_id') | first }}\n"
+      area_key: '{{ area_id(triggered_entity) }}'
+      new_state: '{{ states(triggered_entity) }}'
+  - condition: template
+    value_template: '{{ area_key is not none }}'
+  - event: universal_controller_command
+    event_data:
+      source_device: presence_engine
+      area_key: '{{ area_key }}'
+      action_type: presence
+      command_input: '{{ ''turn_on'' if new_state == ''on'' else ''turn_off'' }}'
+- id: '1771937200741'
+  alias: Wake Up William
+  description: ''
+  triggers:
+  - trigger: time
+    at: 07:25:00
+  - trigger: time
+    at: 07:34:00
+  - trigger: time
+    at: 07:42:00
+  - trigger: time
+    at: 07:51:00
+  - trigger: time
+    at: 08:00:00
+  conditions:
+  - condition: state
+    entity_id: binary_sensor.is_school_day
+    state: 'on'
+  actions:
+  - if:
+    - condition: state
+      entity_id: input_boolean.skip_william_wake_up
+      state: 'on'
+    then:
+    - action: input_boolean.turn_off
+      metadata: {}
+      data: {}
+      target:
+        entity_id: input_boolean.skip_william_wake_up
+    else:
+    - if:
+      - condition: state
+        entity_id: binary_sensor.basement_true_occupancy
+        state:
+        - 'on'
+      then:
+      - action: light.turn_on
+        metadata: {}
+        data:
+          transition: 120
+          brightness_pct: 75
+          color_temp_kelvin: 3200
+        target:
+          area_id:
+          - family_room
+          - basement_kitchen
+        enabled: true
+      else:
+      - wait_for_trigger:
+        - trigger: state
+          entity_id:
+          - binary_sensor.basement_true_occupancy
+          to:
+          - 'on'
+          for:
+            hours: 0
+            minutes: 2
+            seconds: 0
+        timeout:
+          hours: 0
+          minutes: 5
+          seconds: 0
+          milliseconds: 0
+      - if:
+        - condition: template
+          value_template: '{{ wait.completed }}'
+        then:
+        - action: light.turn_on
+          metadata: {}
+          data: {}
+          target:
+            entity_id: light.williams_bedroom_main_light
+          enabled: true
+        else:
+        - action: light.turn_on
+          metadata: {}
+          data:
+            transition: 60
+            brightness_pct: 75
+            color_temp_kelvin: 3200
+          target:
+            entity_id:
+            - light.family_room_decks_dimmer
+            - light.family_room_front_dimmer
+            - light.family_room_picture
+            - light.family_room_main
+            - light.family_room_table
+            - light.family_room_fireplace
+          enabled: true
+  mode: single
+- id: '1771996022052'
+  alias: Dispatcher - Zigbee2MQTT Action Handler
+  description: ''
+  triggers:
+  - trigger: mqtt
+    options:
+      topic: zigbee2mqtt/+
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.payload_json.action is defined }}
+
+      '
+  actions:
+  - variables:
+      payload: '{{ trigger.payload_json }}'
+      device_name: '{{ trigger.topic.split(''/'')[1] }}'
+      area_key: '{{ device_name.lower().replace(''relay'', '''').strip().replace(''
+        '', ''_'') }}'
+  - action: logbook.log
+    metadata: {}
+    data:
+      name: ACTION
+      message: '{{ light.guest_bedroom }}-{{area_key}}-{{device_name}}-{{payload}}'
+      entity_id: light.guest_bedroom
+  mode: single
+- id: '1771997359723'
+  alias: New automation
+  description: ''
+  triggers:
+  - trigger: state
+    entity_id:
+    - event.guest_bedroom_relay_action
+    - event.powder_room_relay_action
+  conditions: []
+  actions:
+  - variables:
+      data: '{{ trigger }}'
+  mode: single
+- id: presence_universal_engine
+  alias: 'Presence: Universal Engine'
+  description: ''
+  triggers:
+  - value_template: "{{ label_entities('presence') \n   | expand \n   | selectattr('state',
+      'eq', 'on') \n   | list | count > 0 }}\n"
+    trigger: template
+  actions:
+  - variables:
+      triggered_entity: "{{ label_entities('presence') | expand \n   | sort(attribute='last_changed',
+        reverse=true) \n   | map(attribute='entity_id') | first }}\n"
+      area_key: '{{ area_id(triggered_entity) }}'
+      new_state: '{{ states(triggered_entity) }}'
+  - condition: template
+    value_template: '{{ area_key is not none }}'
+  - event: universal_controller_command
+    event_data:
+      source_device: presence_engine
+      area_key: '{{ area_key }}'
+      action_type: presence
+      command_input: '{{ ''turn_on'' if new_state == ''on'' else ''turn_off'' }}'
+- id: '1772119307507'
+  alias: Label Trigger - Test bed
+  description: ''
+  triggers:
+  - trigger: state
+    entity_id:
+    - sensor.active_sensor_monitor
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.to_state.state not in [''none'', ''unknown'', ''unavailable'']
+      and trigger.from_state.state != trigger.to_state.state }}'
+  actions:
+  - variables:
+      count: "{{ label_entities('presence') \n | expand \n | selectattr('state', 'eq',
+        'on') \n | list | count }}\n"
+      source_entity: '{{ trigger.to_state.state }}'
+      area_key: '{{ area_id(source_entity) | default(''none'') }}'
+      entity_labels: '{{ labels(source_entity) }}'
+  - action: logbook.log
+    metadata: {}
+    data:
+      message: This was Triggered {{trigger.entity_id }}
+      entity_id: '{{ source_entity }}'
+      name: LABEL TRIGGER
+  mode: parallel
+  max: 10
+- id: '1772982255001'
+  alias: Executive - Recursive Registry Cleaner
+  description: Iterates through the Registry with support for Skip-Warning (Transient)
+    logic
+  triggers:
+  - trigger: event
+    event_type: start_registry_cleaner
+  - trigger: event
+    event_type: cleaner_heartbeat
+  - trigger: state
+    entity_id: sensor.lighting_off_registry
+    to: active
+  actions:
+  - variables:
+      registry: '{{ state_attr(''sensor.lighting_off_registry'', ''active_timers'')
+        or {} }}'
+      current_time: '{{ now() }}'
+  - repeat:
+      for_each: '{{ registry.items() | list }}'
+      sequence:
+      - variables:
+          area_key: '{{ repeat.item[0] }}'
+          data: '{{ repeat.item[1] }}'
+          expiry: '{{ as_timestamp(data.expiry) | default(0) }}'
+          is_locked: '{{ data.locked }}'
+          is_warned: '{{ data.warned }}'
+          skip_warning: '{{ data.skip_warning | default(false) }}'
+          now_ts: '{{ as_timestamp(now()) }}'
+      - variables:
+          is_expired: '{{ now_ts >= expiry }}'
+      - choose:
+        - conditions:
+          - condition: template
+            value_template: '{{ not is_locked and skip_warning and is_expired }}
+
+              '
+          sequence:
+          - event: universal_controller_command
+            event_data:
+              action_type: light_call
+              command_input: turn_off
+              area_key: '{{ area_key }}'
+          - event: lighting_registry_update
+            event_data:
+              action: remove
+              area_key: '{{ area_key }}'
+          - action: logbook.log
+            metadata: {}
+            data:
+              name: Registry Cleaner
+              message: Light Call Turn Off Expired
+        - conditions:
+          - condition: template
+            value_template: '{{ not is_locked and not is_warned and not skip_warning
+              and is_expired }}'
+          sequence:
+          - event: universal_controller_command
+            event_data:
+              action_type: light_call
+              command_input: turn_on
+              action_value: min
+              area_key: '{{ area_key }}'
+          - event: lighting_registry_update
+            event_data:
+              action: warned
+              area_key: '{{ area_key }}'
+          - action: logbook.log
+            metadata: {}
+            data:
+              name: Registry Cleaner
+              message: Light Call Dim Warning
+        - conditions:
+          - condition: template
+            value_template: '{{ not is_locked and is_warned and is_expired }}'
+          sequence:
+          - event: universal_controller_command
+            event_data:
+              action_type: light_call
+              command_input: turn_off
+              area_key: '{{ area_key }}'
+          - event: lighting_registry_update
+            event_data:
+              action: remove
+              area_key: '{{ area_key }}'
+          - action: logbook.log
+            metadata: {}
+            data:
+              name: Registry Cleaner
+              message: Light Call Turn Off Expired After Warning
+  - if:
+    - condition: template
+      value_template: '{{ state_attr(''sensor.lighting_off_registry'', ''active_timers'')
+        | count > 0 }}'
+    then:
+    - delay: 00:00:05
+    - event: cleaner_heartbeat
+  mode: restart
+- id: '1772989092630'
+  alias: Bridge - Powder Room Presence (Deterministic)
+  description: Registry-First Bridge for Powder Room with Overrides
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.powder_room_door
+    id: door
+  - trigger: state
+    entity_id: binary_sensor.powder_room_motion
+    id: motion
+  - trigger: state
+    entity_id: switch.powder_room_relay
+    id: Manual_Toggle
+  conditions:
+  - condition: template
+    value_template: '{% set current = state_attr(''sensor.active_area_overrides'',
+      ''overridden_areas'') or [] %} {{ ''powder_room'' not in current }}'
+  actions:
+  - variables:
+      event_ts: '{{ trigger.to_state.last_changed }}'
+      is_door_open: '{{ is_state(''binary_sensor.powder_room_door'', ''on'') }}'
+      is_motion: '{{ is_state(''binary_sensor.powder_room_motion'', ''on'') }}'
+      has_presence_label: '{{ (area_entities(area_key) | select(''target_label'',
+        ''presence'') | list | count) > 0 }}
+
+        '
+  - choose:
+    - conditions:
+      - condition: trigger
+        id: Manual_Toggle
+      - condition: template
+        value_template: "{{ trigger.to_state.context.user_id is none and\n   trigger.to_state.context.parent_id
+          is none }}"
+      sequence:
+      - event: lighting_registry_update
+        event_data:
+          action: remove
+          area_key: powder_room
+      - event: universal_controller_command
+        event_data:
+          action_type: light_override
+          area_key: powder_room
+          command_input: '{{ ''on'' if is_state(''switch.powder_room_relay'', ''on'')
+            else ''off'' }}'
+    - conditions:
+      - condition: trigger
+        id: door
+      - condition: template
+        value_template: '{{ is_door_open }}'
+      sequence:
+      - event: universal_controller_command
+        event_data:
+          action_type: light_call
+          command_input: turn_on
+          area_key: powder_room
+          action_value: '{{ ''night_mode'' if is_state(''binary_sensor.night_light_sensor'',
+            ''on'') else ''day_mode'' }}'
+      - event: lighting_registry_update
+        event_data:
+          action: add
+          area_key: powder_room
+          seconds: '{{ 1800 if not has_presence_label else 120 }}'
+          timestamp: '{{ event_ts }}'
+      - event: start_registry_cleaner
+    - conditions:
+      - condition: trigger
+        id: door
+      - condition: template
+        value_template: '{{ not is_door_open }}'
+      sequence:
+      - event: lighting_registry_update
+        event_data:
+          action: add
+          area_key: powder_room
+          seconds: '{{ 30 if has_presence_label else 5 }}'
+          timestamp: '{{ event_ts }}'
+    - conditions:
+      - condition: trigger
+        id: motion
+      - condition: template
+        value_template: '{{ is_motion and not is_door_open }}'
+      sequence:
+      - event: lighting_registry_update
+        event_data:
+          action: lock
+          area_key: powder_room
+    - conditions:
+      - condition: trigger
+        id: motion
+      - condition: template
+        value_template: '{{ is_motion and is_door_open }}'
+      sequence:
+      - event: lighting_registry_update
+        event_data:
+          action: add
+          area_key: powder_room
+          seconds: 120
+          timestamp: '{{ event_ts }}'
+  mode: queued
+  max: 10
+- id: '1773049447479'
+  alias: Bridge - Global Presence Orchestrator
+  description: Determines 5s/30s/120s/Lock logic based on the sensor's Area and Labels
+  triggers:
+  - trigger: state
+    entity_id: sensor.active_sensor_monitor
+  conditions:
+  - condition: template
+    value_template: "{{ trigger.to_state.state not in ['none', 'unknown', 'unavailable']
+      and\n   trigger.from_state.state != trigger.to_state.state }}"
+  - condition: template
+    value_template: "{% set source_entity = trigger.to_state.state %} \n{% set area
+      = area_id(source_entity) %} \n{% set overrides = state_attr('sensor.active_area_overrides',
+      'overridden_areas') or [] %} \n{{ area not in overrides }}\n"
+  actions:
+  - variables:
+      source_entity: '{{ trigger.to_state.state }}'
+      area_key: '{{ area_id(source_entity) | default(''none'') }}'
+      entity_labels: '{{ labels(source_entity) }}'
+      event_ts: '{{ states[source_entity].last_changed }}'
+      is_on: '{{ is_state(source_entity, ''on'') }}'
+      has_presence_capability: '{{ (area_entities(area_key) | intersect(label_entities(''presence''))
+        | count) > 0 }}
+
+        '
+      is_door: '{{ ''door'' in entity_labels  }}'
+      is_presence: '{{ ''presence'' in entity_labels }}'
+      area_policy: '{{ labels(area_key) }}'
+      is_night_policy_enabled: '{{ ''night_light'' in area_policy }}'
+      house_is_in_night_posture: '{{ is_state(''binary_sensor.night_light_sensor'',
+        ''on'') }}'
+      use_night_settings: '{{ is_night_policy_enabled and house_is_in_night_posture
+        }}'
+      final_action_value: '{{ ''night_mode'' if use_night_settings else ''day_mode''
+        }}'
+      final_target_label: "{% if use_night_settings %}\n  {{ ['night_light'] }}\n{%
+        elif is_night_policy_enabled %}\n  {{ ['main'] }}\n{% else %}\n  {{ [] }}\n{%
+        endif %}\n"
+      door_entity: "{{ (area_entities(area_key) \n  | intersect(label_entities('door')))
+        \n  | first \n  | default('none') }}\n"
+      has_door: '{{ door_entity != ''none'' }}'
+      is_lock_zone: '{{ ''lock_eligible'' in area_policy }}'
+      registry_entry: '{{ (state_attr(''sensor.lighting_off_registry'', ''active_timers'')
+        or {}).get(area_key, {}) }}'
+      is_area_locked: '{{ registry_entry.get(''locked'', false) }}'
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ (is_door or is_presence) and is_on and not is_area_locked
+          }}'
+        alias: Door Or Presence Is On with No Locks
+      sequence:
+      - event: universal_controller_command
+        event_data:
+          action_type: light_call
+          command_input: turn_on
+          area_key: '{{ area_key }}'
+          action_value: '{{ final_action_value }}'
+          target_label: '{{ final_target_label }}'
+          source_device: monitor
+          data_payload: '{{ trigger.to_state }}'
+      - event: lighting_registry_update
+        event_data:
+          action: remove
+          area_key: '{{ area_key }}'
+          seconds: '{{ 120 if has_presence_capability else 1800 }}'
+          timestamp: '{{ event_ts }}'
+      - action: logbook.log
+        metadata: {}
+        data:
+          name: Bridge Orchestrator
+          message: Light Turn On. Listener
+          entity_id: '{{ trigger.to_state.state }}'
+    - conditions:
+      - alias: Door Or Presence Is On with No Locks
+        condition: template
+        value_template: '{{ is_presence and not is_on and not is_area_locked }}'
+      sequence:
+      - event: lighting_registry_update
+        event_data:
+          action: add
+          area_key: '{{ area_key }}'
+          seconds: '{{ 120 if has_presence_capability else 1800 }}'
+          skip_warning: '{{ not is_lock_zone }}'
+          timestamp: '{{ event_ts }}'
+      - event: start_registry_cleaner
+      - action: logbook.log
+        metadata: {}
+        data:
+          name: Bridge Orchestrator
+          message: Light Registry Start Cleaner
+          entity_id: '{{ trigger.to_state.state }}'
+      alias: Cleared and Unlocked
+    - conditions:
+      - condition: template
+        value_template: '{{ is_door and not is_on }}'
+        alias: Door Closed
+      sequence:
+      - event: lighting_registry_update
+        event_data:
+          action: add
+          area_key: '{{ area_key }}'
+          seconds: '{{ 30 if has_presence_capability else 5 }}'
+          skip_warning: '{{ not is_lock_zone }}'
+          timestamp: '{{ event_ts }}'
+      - action: logbook.log
+        metadata: {}
+        data:
+          name: Bridge Orchestrator
+          message: Light Registry Timer Reset Door Closed
+          entity_id: '{{ trigger.to_state.state }}'
+    - conditions:
+      - alias: Presence Is On with Door Closed
+        condition: template
+        value_template: '{{ is_presence and is_on and has_door and is_state(door_entity,
+          ''off'') }}'
+      sequence:
+      - event: lighting_registry_update
+        event_data:
+          action: lock
+          area_key: '{{ area_key }}'
+      - action: logbook.log
+        metadata: {}
+        data:
+          name: Bridge Orchestrator
+          message: Light Registry Locked Presence with Door Closed
+          entity_id: '{{ trigger.to_state.state }}'
+    - conditions:
+      - condition: template
+        value_template: '{{ is_presence and is_on and ( not has_door or is_state(door_entity,
+          ''on'') )}}'
+      sequence:
+      - event: lighting_registry_update
+        event_data:
+          action: add
+          area_key: '{{ area_key }}'
+          seconds: 120
+          timestamp: '{{ event_ts }}'
+      - action: logbook.log
+        metadata: {}
+        data:
+          name: Bridge Orchestrator
+          message: Light Registry Presence Reset Timer - Door Open Unlocked
+          entity_id: '{{ trigger.to_state.state }}'
+      alias: Presence Is On
+  mode: parallel
+  max: 20
+- id: '1773161819691'
+  alias: 'Override: Universal Engine'
+  description: Handle manual relay overrides generically based on labels
+  triggers:
+  - trigger: state
+    entity_id: sensor.active_override_source
+  conditions:
+  - condition: template
+    value_template: "{{ trigger.to_state.state not in ['none', 'unknown', 'unavailable']\n
+      \  and trigger.from_state.state != trigger.to_state.state }}\n"
+  actions:
+  - variables:
+      source_entity: '{{ trigger.to_state.state }}'
+      area_key: '{{ area_id(source_entity) | default(''none'') }}'
+      src: '{{ states[source_entity] }}'
+  - condition: template
+    value_template: '{{ src.context.user_id is none and src.context.parent_id is none
+      }}
+
+      '
+  - event: universal_controller_command
+    event_data:
+      action_type: light_override
+      area_key: '{{ area_key }}'
+      command_input: '{{ src.state }}'
+      data_payload: '{{ src }}'
+  mode: parallel
+  max: 20
+- id: override_expiry_sweeper
+  alias: 'Override: Expiry Sweeper'
+  description: ''
+  triggers:
+  - minutes: /30
+    trigger: time_pattern
+  actions:
+  - variables:
+      data: '{{ state_attr(''sensor.active_area_overrides'', ''override_expiry'')
+        or {} }}'
+      now_ts: '{{ now().timestamp() | int }}'
+  - repeat:
+      for_each: '{{ data.items() | list }}'
+      sequence:
+      - variables:
+          area_key: '{{ repeat.item[0] }}'
+          expiry: '{{ repeat.item[1] | int }}'
+      - if:
+        - condition: template
+          value_template: '{{ expiry <= now_ts }}'
+        then:
+        - event: universal_controller_command
+          event_data:
+            action_type: light_call
+            area_key: '{{ area_key }}'
+            command_input: turn_off
+            action_value: ''
+            target_label: []
+            source_device: override_expiry
+            data_payload: {}
+        - event: universal_controller_command
+          event_data:
+            action_type: light_override
+            area_key: '{{ area_key }}'
+            command_input: 'off'
+            data_payload: {}
+  mode: single
+- id: '1773168023699'
+  alias: 'Override: Infer from Pico Light Call'
+  description: Use Pico turn_on/turn_off in override-eligible areas to toggle override
+  triggers:
+  - event_type: universal_controller_command
+    event_data:
+      source_device: pico
+      action_type: light_call
+    trigger: event
+  conditions:
+  - condition: template
+    value_template: '{% set area_key = trigger.event.data.area_key %} {% set cmd =
+      trigger.event.data.command_input %} {% set areas = label_areas(''override_eligible'')
+      %} {{ area_key in areas and cmd in [''turn_on'', ''turn_off''] }}
+
+      '
+  actions:
+  - variables:
+      area_key: '{{ trigger.event.data.area_key }}'
+      cmd: '{{ trigger.event.data.command_input }}'
+  - event: universal_controller_command
+    event_data:
+      action_type: light_override
+      area_key: '{{ area_key }}'
+      command_input: '{{ "on" if cmd == "turn_on" else "off" }}'
+      data_payload: '{{ trigger.event.data }}'
+  mode: parallel
+- id: '1773168077335'
+  alias: 'Override: Expiry Sweeper'
+  description: ''
+  triggers:
+  - minutes: /15
+    trigger: time_pattern
+  actions:
+  - variables:
+      data: '{{ state_attr(''sensor.active_area_overrides'', ''override_expiry'')
+        or {} }}'
+      now_ts: '{{ now().timestamp() | int }}'
+  - repeat:
+      for_each: '{{ data.items() | list }}'
+      sequence:
+      - variables:
+          area_key: '{{ repeat.item[0] }}'
+          expiry: '{{ repeat.item[1] | int }}'
+      - if:
+        - condition: template
+          value_template: '{{ expiry <= now_ts }}'
+        then:
+        - event: universal_controller_command
+          event_data:
+            action_type: light_call
+            area_key: '{{ area_key }}'
+            command_input: turn_off
+            action_value: ''
+            target_label: []
+            source_device: override_expiry
+            data_payload: {}
+        - event: universal_controller_command
+          event_data:
+            action_type: light_override
+            area_key: '{{ area_key }}'
+            command_input: 'off'
+            data_payload: {}
+  mode: single

@@ -1,0 +1,17 @@
+trigger:
+  - trigger: state
+    entity_id:
+      - binary_sensor.basement_stairs_occupancy
+binary_sensor:
+  - name: "Basement True Occupancy"
+    unique_id: basement_true_occupancy
+    device_class: occupancy
+    # We removed the delay_off here because the Lutron handles the 5 mins
+    state: >
+      {% set stairs = states.binary_sensor.basement_stairs_occupancy %}
+      {% set interior = states.binary_sensor.basement_interior_occupancy %}
+      {% if stairs.state == 'on' or interior.state == 'on' %}
+        true
+      {% else %}
+        {{ not (stairs.state == 'off' and interior.state == 'off') }}
+      {% endif %}

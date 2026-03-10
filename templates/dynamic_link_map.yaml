@@ -1,0 +1,24 @@
+trigger:
+  - trigger: event
+    event_type: "manage_area_map"
+sensor:
+  - name: "Dynamic Area Link Map"
+    unique_id: dynamic_area_link_map
+    state: "{{ now().isoformat() }}"
+    attributes:
+      links: >
+        {% set current = this.attributes.get('links', {}) %}
+        {% set source = trigger.event.data.source %}
+        {% set target = trigger.event.data.target %}
+        
+        {% if trigger.event.data.action == 'add' %}
+          {# Add target to source list, ensuring no duplicates #}
+          {% set targets = (current.get(source, []) + [target]) | unique | list %}
+          {{ dict(current, **{source: targets}) }}
+        {% elif trigger.event.data.action == 'remove' %}
+          {# Remove target from source list #}
+          {% set targets = current.get(source, []) | reject('eq', target) | list %}
+          {{ dict(current, **{source: targets}) }}
+        {% else %}
+          {{ current }}
+        {% endif %}

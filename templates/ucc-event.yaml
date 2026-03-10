@@ -1,0 +1,5 @@
+sensor:
+  - name: "UCC Registry Log"
+    unique_id: ucc_registry_log
+    icon: mdi:script-text-outline
+    state: "Active"

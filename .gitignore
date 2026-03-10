@@ -1,0 +1,30 @@
+# Databases and logs
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.log.*
+
+# Hidden system folders (The 3k files are here!)
+.storage/
+.cloud/
+.ssh/
+
+# Private data
+secrets.yaml
+
+# Add-ons and HACS (Optional, but keeps things clean)
+custom_components/
+
+# Certivicates
+*.crt
+*.key
+*.pem
+
+# STuff I don't want to track
+.tts/
+
+# Editor temporaries
+*.swp
+.DS_Store
+.vscode/

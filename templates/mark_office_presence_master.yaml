@@ -1,0 +1,21 @@
+trigger:
+  - trigger: state
+    entity_id:
+      - binary_sensor.mark_office_motion_occupancy
+      - binary_sensor.mark_office_presence_sensor_occupancy
+  - trigger: homeassistant
+    event: start
+  - trigger: event
+    event_type: event_template_reloaded
+binary_sensor:
+  - name: "Mark Office Presence Master"
+    unique_id: mark_office_presence_master_001
+    device_class: presence
+    state: >
+      {{ is_state('binary_sensor.mark_office_motion_occupancy', 'on') or 
+        is_state('binary_sensor.mark_office_presence_sensor_occupancy', 'on') }}
+    availability: >
+      {{ has_value('binary_sensor.mark_office_motion_occupancy') }}
+    # The 2-minute delay reset logic is handled here
+    delay_off:
+      minutes: 1
