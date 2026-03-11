@@ -117,7 +117,3 @@ The "Brain" that manages the relationship between hardware and the Registry.
 3. **Deploy:** Add the `active_relay_source`, `relay_state_registry`, and `universal_relay_enforcer` to your configuration.
 
 ---
-
-By documenting this, you move from "I have a complex config" to "I have a scalable platform." If you ever decide to add a **"Party Mode"** or **"Vacation Mode"**, you don't rewrite automations—you simply add a new **Label** and a single check in the Reaper.
-
-**Would you like me to help you generate the "Policy Checker" script?** It’s a small script that can scan your config and notify you if you have an Area with lights but no `presence` label, effectively catching "Ghost Areas" before they break your automation flow.
