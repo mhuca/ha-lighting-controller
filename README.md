@@ -69,6 +69,55 @@ To onboard a new room into the **mhuca Lighting Controller**:
 ---
 
 
+---
+
+## 🏗️ Universal Relay Enforcer & Registry
+
+This module implements a **Closed-Loop Control System** for Home Assistant. It ensures that any entity labeled as a `relay` remains in its "Golden State" unless explicitly changed by a human user.
+
+### 🧩 The Problem
+
+Standard automations often fight with manual overrides or power-loss states. If a relay reboots to `off` during a power flicker, the system might not know it was supposed to be `on`. Conversely, if a user manually turns a light off, you don't want a "dumb" watchdog immediately turning it back on.
+
+### 🛡️ The Solution: Contextual Sovereignty
+
+We distinguish between **Intent** and **Noise** by inspecting the `context` of every state change:
+
+* **User Intent:** Changes made via the UI or Physical Toggles (where `parent_id` is null) are accepted as "Consent" and update the **Registry**.
+* **System Noise:** Changes made by automations or power-on defaults (where `parent_id` is present or `user_id` is null) are treated as "Deviations" and are **Nudged** back to the Registry state.
+
+### 📡 Components
+
+#### 1. Active Relay Source (The Pulse)
+
+A template sensor that monitors all `relay` labeled switches. It concatenates the `entity_id` with a `@timestamp`.
+
+* **Why?** This ensures every single state change is a unique string, forcing the Enforcer to trigger even if the same relay flips twice in rapid succession.
+
+#### 2. Relay State Registry (The Truth)
+
+A trigger-based template sensor that stores a `relay_state_map`.
+
+* **Feature:** It only updates when it receives a `set_relay_command` event from the Enforcer.
+* **Safe Discovery:** New devices default to `uninitialized`, preventing accidental switching until a user first interacts with the device.
+
+#### 3. Universal Relay Enforcer (The Governor)
+
+The "Brain" that manages the relationship between hardware and the Registry.
+
+* **Scenario 1 (Consent):** User changes a state $\rightarrow$ Fire `set_relay_command` to update the Registry.
+* **Scenario 2 (Correction):** Automation/Power-Loss changes a state $\rightarrow$ Fire `switch.turn_x` to restore hardware to the Registry state.
+
+---
+
+### 🚀 Getting Started
+
+1. **Label your entities:** Add the `relay` label to any switch you want to protect.
+2. **Label your areas:** Add `override_eligible` to areas where you want dynamic enrollment.
+3. **Deploy:** Add the `active_relay_source`, `relay_state_registry`, and `universal_relay_enforcer` to your configuration.
+
+---
+
 By documenting this, you move from "I have a complex config" to "I have a scalable platform." If you ever decide to add a **"Party Mode"** or **"Vacation Mode"**, you don't rewrite automations—you simply add a new **Label** and a single check in the Reaper.
 
 **Would you like me to help you generate the "Policy Checker" script?** It’s a small script that can scan your config and notify you if you have an Area with lights but no `presence` label, effectively catching "Ghost Areas" before they break your automation flow.
