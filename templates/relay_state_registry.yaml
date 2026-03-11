@@ -1,0 +1,20 @@
+trigger:
+  - trigger: event
+    event_type: set_relay_command
+
+sensor:
+  - name: "Relay State Registry"
+    unique_id: relay_state_registry
+    icon: mdi:sync-circle
+    state: "{{ this.attributes.relay_state_map | count if this.attributes.relay_state_map else 0 }}"
+    attributes:
+      # Logical State: "What should this area be?"
+      relay_state_map: >
+        {% set current = this.attributes.get('relay_state_map', {}) %}
+        {% if trigger.platform == 'event' %}
+          {% set entity_id = trigger.event.data.entity_id %}
+          {% set cmd = trigger.event.data.desired_state %}
+          {{ dict(current, **{entity_id: cmd}) }}
+        {% else %}
+          {{ current if current is mapping else {} }}
+        {% endif %}

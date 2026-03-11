@@ -2283,39 +2283,124 @@
       data_payload: '{{ trigger.event.data }}'
   mode: parallel
 - id: '1773168077335'
-  alias: 'Override: Expiry Sweeper'
-  description: ''
+  alias: 'Override: Expiry & Policy Reaper'
+  description: Cleans up manual overrides based on expiry timestamps and area policies
   triggers:
   - trigger: time_pattern
     hours: /1
   actions:
   - variables:
-      data: '{{ state_attr(''sensor.active_area_overrides'', ''override_expiry'')
+      registry: '{{ state_attr(''sensor.active_area_overrides'', ''override_expiry'')
         or {} }}'
       now_ts: '{{ now().timestamp() | int }}'
   - repeat:
-      for_each: '{{ data.items() | list }}'
+      for_each: '{{ registry.items() | list }}'
       sequence:
       - variables:
           area_key: '{{ repeat.item[0] }}'
-          expiry: '{{ repeat.item[1] | int }}'
+          expiry_ts: '{{ repeat.item[1] | int }}'
+          area_policy: '{{ labels(area_key) }}'
+          is_lock_zone: '{{ ''lock_eligible'' in area_policy }}'
+          is_area_locked: '{{ (state_attr(''sensor.lighting_off_registry'', ''active_timers'')
+            or {}).get(area_key, {}).get(''locked'', false) }}
+
+            '
+          presence_entities: '{{ area_entities(area_key) | intersect(label_entities(''presence''))
+            }}'
+          is_empty: "{% if presence_entities | length > 0 %}\n  {{ presence_entities
+            | select('is_state', 'on') | list | length == 0 }}\n{% else %}\n  true\n{%
+            endif %}\n"
       - if:
         - condition: template
-          value_template: '{{ expiry <= now_ts }}'
+          value_template: '{{ expiry_ts <= now_ts and not (is_lock_zone and is_area_locked)
+            }}
+
+            '
         then:
         - event: universal_controller_command
           event_data:
             action_type: light_call
             area_key: '{{ area_key }}'
             command_input: turn_off
+            source_device: expiry_reaper
             action_value: ''
             target_label: []
-            source_device: override_expiry
-            data_payload: {}
+            data_payload:
+              transition: 20
         - event: universal_controller_command
           event_data:
             action_type: light_override
             area_key: '{{ area_key }}'
             command_input: 'off'
-            data_payload: {}
-  mode: single
+            source_device: expiry_reaper
+- id: '1773188066205'
+  alias: 'System: Universal Relay Enforcer'
+  description: Syncs hardware labeled 'relay' to the state registry
+  triggers:
+  - trigger: state
+    entity_id: sensor.active_relay_source
+  conditions:
+  - condition: template
+    value_template: "{{ trigger.to_state.state not in ['none', 'unknown', 'unavailable']\n
+      \  and trigger.from_state.state != trigger.to_state.state \n   and trigger.to_state.context.parent_id
+      is none }}\n"
+  actions:
+  - variables:
+      source_entity: '{{ trigger.to_state.state.split(''@'')[0] }}'
+      area_key: '{{ area_id(source_entity) | default(''none'') }}'
+      src: '{{ states[source_entity] }}'
+      desired_states: '{{ state_attr(''sensor.relay_state_registry'', ''relay_state_map'')
+        or {} }}'
+  - variables:
+      physical_state: '{{ states(source_entity) }}'
+      target_state: '{{ desired_states.get(source_entity, ''uninitialized'' ) }}'
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ trigger.to_state.context.user_id is not none and trigger.to_state.context.parent_id
+          is none }}'
+      - condition: template
+        value_template: "{{ physical_state is not none and \n   physical_state !=
+          target_state }}\n"
+      sequence:
+      - event: set_relay_command
+        event_data:
+          entity_id: '{{ source_entity }}'
+          desired_state: '{{ physical_state }}'
+      - action: logbook.log
+        data:
+          name: 'Relay Enforcer '
+          message: Syncing {{ area_key }} desired state ({{ source_entity }}) to {{
+            physical_state }}
+          entity_id: '{{ source_entity }}'
+    - conditions:
+      - condition: template
+        value_template: '{{ trigger.to_state.context.parent_id is not none or trigger.to_state.context.user_id
+          is none }}
+
+          '
+      - condition: template
+        value_template: "{{ physical_state is not none and \n   physical_state !=
+          target_state and\n   target_state in ['on', 'off'] }}\n"
+      sequence:
+      - if:
+        - condition: template
+          value_template: '{{ target_state == ''on''}}'
+        then:
+        - action: switch.turn_on
+          target:
+            entity_id: '{{ source_entity }}'
+          data: {}
+        else:
+        - action: switch.turn_off
+          target:
+            entity_id: '{{ source_entity }}'
+          data: {}
+      - action: logbook.log
+        data:
+          name: Relay Enforcer
+          message: Syncing {{ area_key }} hardware ({{ source_entity }}) to {{ target_state
+            }}
+          entity_id: '{{ source_entity }}'
+    default:
+    - stop: '{{ source_entity }} matches target state {{ target_state }}'
