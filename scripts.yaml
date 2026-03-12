@@ -856,3 +856,51 @@ basement_stairs_50_movie:
   fields: {}
   alias: Basement Stairs 10. Movie
   description: ''
+system_global_registry_health_check:
+  alias: System - Global Registry Health Check
+  icon: mdi:stethoscope
+  sequence:
+  - variables:
+      registry: '{{ state_attr(''sensor.global_variable_registry'', ''vars'') }}'
+      all_entities: "{% set ns = namespace(items=[]) %} {# Scan Globals #} {% for
+        cat, sub in registry.globals.items() %}\n  {% for key, val in sub.items()
+        %}\n    {% if val is string and ('.' in val) %}\n      {% set ns.items = ns.items
+        + [val] %}\n    {% endif %}\n  {% endfor %}\n{% endfor %} {# Scan Area Metadata
+        #} {% for area, data in registry.area_metadata.items() %}\n  {% if data.occupancy_components
+        is defined %}\n    {% for comp, ent in data.occupancy_components.items() %}\n
+        \      {% set ns.items = ns.items + [ent] %}\n    {% endfor %}\n  {% endif
+        %}\n{% endfor %} {{ ns.items | unique | list }}\n"
+      missing_entities: "{% set ns = namespace(missing=[]) %} {% for ent in all_entities
+        %}\n  {% if states(ent) == 'unknown' %}\n    {% set ns.missing = ns.missing
+        + [ent] %}\n  {% endif %}\n{% endfor %} {{ ns.missing }}\n"
+      unavailable_entities: '{{ all_entities | select(''is_state'', ''unavailable'')
+        | list }}
+
+        '
+  - if:
+    - condition: template
+      value_template: '{{ missing_entities | count > 0 or unavailable_entities | count
+        > 0 }}'
+    then:
+    - action: logbook.log
+      data:
+        name: Registry Health Check
+        message: '⚠️ Health Check Failed!  Missing: {{ missing_entities | join('',
+          '') if missing_entities else ''None'' }} |  Offline: {{ unavailable_entities
+          | join('', '') if unavailable_entities else ''None'' }}
+
+          '
+        entity_id: '{{ registry.globals.logic_engines.system_log }}'
+    - action: notify.persistent_notification
+      data:
+        title: Registry Integrity Alert
+        message: 'Your SDH Registry contains invalid entities.  Check the System Log
+          for details.
+
+          '
+    else:
+    - action: logbook.log
+      data:
+        name: Registry Health Check
+        message: ✅ All {{ all_entities | count }} registry entities verified and online.
+        entity_id: '{{ registry.globals.logic_engines.system_log }}'

@@ -73,11 +73,15 @@
   actions:
   - alias: Intent and Context
     variables:
+      registry: '{{ state_attr(''sensor.global_variable_registry'', ''vars'') }}'
+      g_logic: '{{ registry.globals.logic_engines }}'
+      target_kelvin: '{{ states(g_logic.cct_calculation) | int(3200) }}'
+      target_br_dimmer: '{{ states(g_logic.brightness_calculation) | int(255) }}'
+      log_dest: '{{ g_logic.system_log }}'
       payload: '{{ trigger.payload if trigger.id == ''MQTT_Message'' else trigger.event.data
         }}'
       action_val: '{{ payload.action_value | default('''') }}'
       area_key: '{{ payload.area_key }}'
-      target_kelvin: '{{ states(''sensor.cct_calculation'') | int(3200) }}'
       val: '{{ payload.target_label | default([], true) }}'
       target_labels: "{{ ( [val] if val is string else val) \n  | map('label_entities')
         \n  | sum(start=[]) \n  | unique \n  | list \n}}\n"
@@ -181,7 +185,7 @@
         target:
           entity_id: '{{ dimmer_lights }}'
         data:
-          brightness: '{{ states(''sensor.cct_to_brightness'') | int(150) }}'
+          brightness: '{{ target_br_dimmer | int(150) }}'
     - alias: Binary Lights Turn On
       if:
       - condition: template
@@ -211,7 +215,7 @@
       message: 'Light Call Source: {{ payload.source_device | default('''') }} | Area:
         {{ area_key }} | Label: {{ val[0] | default(''All'') }} | color_temp_kelvin:
         {{ target_kelvin }} {{this.entity_id}}'
-      entity_id: sensor.ucc_registry_log
+      entity_id: '{{ log_dest }}'
   mode: queued
   max: 20
 - id: '1771475160937'
@@ -411,8 +415,10 @@
     for: 00:00:10
   actions:
   - variables:
-      target_kelvin: '{{ states(''sensor.cct_calculation'') | int(3200) }}'
-      target_br_dimmer: '{{ states(''sensor.cct_to_brightness'') | int(150) }}'
+      registry: '{{ state_attr(''sensor.global_variable_registry'', ''vars'') }}'
+      g_logic: '{{ registry.globals.logic_engines }}'
+      target_kelvin: '{{ states(g_logic.cct_calculation) | int(3200) }}'
+      target_br_dimmer: '{{ states(g_logic.brightness_calculation) | int(150) }}'
       native_cct_targets: "{% set ns = namespace(targets=[]) %}\n{% for l in states.light
         | selectattr('state', 'eq', 'on') %}\n  {% set modes = l.attributes.get('supported_color_modes',
         []) %}\n  {% if 'color_temp' in modes %}\n    {% set cur_k = l.attributes.get('color_temp_kelvin',
@@ -1921,11 +1927,14 @@
     to: active
   actions:
   - variables:
-      registry: '{{ state_attr(''sensor.lighting_off_registry'', ''active_timers'')
-        or {} }}'
+      global_vars: '{{ state_attr(''sensor.global_variable_registry'', ''vars'') }}'
+      g_logic: '{{ global_vars.globals.logic_engines }}'
+      target_registry: '{{ g_logic.lighting_off_registry }}'
+      log_dest: '{{ g_logic.system_log }}'
+      registry_data: '{{ state_attr(target_registry, ''active_timers'') or {} }}'
       current_time: '{{ now() }}'
   - repeat:
-      for_each: '{{ registry.items() | list }}'
+      for_each: '{{ registry_data.items() | list }}'
       sequence:
       - variables:
           area_key: '{{ repeat.item[0] }}'
@@ -1935,14 +1944,15 @@
           is_warned: '{{ data.warned }}'
           skip_warning: '{{ data.skip_warning | default(false) }}'
           now_ts: '{{ as_timestamp(now()) }}'
-      - variables:
           is_expired: '{{ now_ts >= expiry }}'
       - choose:
         - conditions:
           - condition: template
-            value_template: '{{ not is_locked and skip_warning and is_expired }}
-
-              '
+            value_template: '{{ is_locked or not is_expired }}'
+          sequence: []
+        - conditions:
+          - condition: template
+            value_template: '{{ skip_warning }}'
           sequence:
           - event: universal_controller_command
             event_data:
@@ -1955,14 +1965,13 @@
               action: remove
               area_key: '{{ area_key }}'
           - action: logbook.log
-            metadata: {}
             data:
               name: Registry Cleaner
-              message: Light Call Turn Off Expired
+              message: Light Call Turn Off (Transient/Skip) for {{ area_key }}
+              entity_id: '{{ log_dest }}'
         - conditions:
           - condition: template
-            value_template: '{{ not is_locked and not is_warned and not skip_warning
-              and is_expired }}'
+            value_template: '{{ not is_warned }}'
           sequence:
           - event: universal_controller_command
             event_data:
@@ -1976,13 +1985,13 @@
               action: warned
               area_key: '{{ area_key }}'
           - action: logbook.log
-            metadata: {}
             data:
               name: Registry Cleaner
-              message: Light Call Dim Warning
+              message: Light Call Dim Warning for {{ area_key }}
+              entity_id: '{{ log_dest }}'
         - conditions:
           - condition: template
-            value_template: '{{ not is_locked and is_warned and is_expired }}'
+            value_template: '{{ is_warned }}'
           sequence:
           - event: universal_controller_command
             event_data:
@@ -1995,14 +2004,14 @@
               action: remove
               area_key: '{{ area_key }}'
           - action: logbook.log
-            metadata: {}
             data:
               name: Registry Cleaner
-              message: Light Call Turn Off Expired After Warning
+              message: Light Call Turn Off After Warning for {{ area_key }}
+              entity_id: '{{ log_dest }}'
   - if:
     - condition: template
-      value_template: '{{ state_attr(''sensor.lighting_off_registry'', ''active_timers'')
-        | count > 0 }}'
+      value_template: '{{ (state_attr(target_registry, ''active_timers'') or {}) |
+        count > 0 }}'
     then:
     - delay: 00:00:05
     - event: cleaner_heartbeat
@@ -2123,6 +2132,10 @@
       'overridden_areas') or [] %} \n{{ area not in overrides }}\n"
   actions:
   - variables:
+      registry: '{{ state_attr(''sensor.global_variable_registry'', ''vars'') }}'
+      g_env: '{{ registry.globals.environmental }}'
+      g_hvac: '{{ registry.globals.hvac }}'
+      g_logic: '{{ registry.globals.logic_engines }}'
       source_entity: '{{ trigger.to_state.state.split(''@'')[0] }}'
       area_key: '{{ area_id(source_entity) | default(''none'') }}'
       entity_labels: '{{ labels(source_entity) }}'
@@ -2134,8 +2147,8 @@
       is_presence: '{{ ''presence'' in entity_labels }}'
       area_policy: '{{ labels(area_key) }}'
       is_night_policy_enabled: '{{ ''night_light'' in area_policy }}'
-      house_is_in_night_posture: '{{ is_state(''binary_sensor.night_light_sensor'',
-        ''on'') }}'
+      house_is_in_night_posture: '{{ is_state(g_env.night_posture_sensor, ''on'')
+        }}'
       use_night_settings: '{{ is_night_policy_enabled and house_is_in_night_posture
         }}'
       final_action_value: '{{ ''night_mode'' if use_night_settings else ''day_mode''
@@ -2147,20 +2160,17 @@
         | first | default(''none'') }}'
       has_door: '{{ door_entity != ''none'' }}'
       is_lock_zone: '{{ ''lock_eligible'' in area_policy }}'
-      registry_entry: '{{ (state_attr(''sensor.lighting_off_registry'', ''active_timers'')
+      registry_entry: '{{ (state_attr(g_logic.lighting_off_registry, ''active_timers'')
         or {}).get(area_key, {}) }}'
       is_area_locked: '{{ registry_entry.get(''locked'', false) }}'
-      peer_area_map:
-        mud_room: garage
-        garage: mud_room
-      adjoining_area: '{{ peer_area_map.get(area_key, ''none'') }}'
+      adjoining_area: '{{ registry.area_metadata.get(area_key, {}).get(''neighbors'',
+        {}).get(''peer'', ''none'') }}'
       should_trigger_peer: '{{ is_door and is_on and area_key != ''none'' and adjoining_area
         != ''none'' }}'
-      hvac_action: '{{ state_attr(''climate.my_ecobee'', ''hvac_action'') | default(''idle'')
+      hvac_action: '{{ state_attr(g_hvac.primary_unit, ''hvac_action'') | default(''idle'')
         }}'
-      fan_running: '{{ is_state_attr(''climate.my_ecobee'', ''fan'', ''on'') }}'
-      hvac_is_active: '{{ hvac_action in [''heating'', ''cooling'', ''fan''] or fan_running
-        }}'
+      fan_running: '{{ is_state_attr(g_hvac.primary_unit, ''fan'', ''on'') }}'
+      hvac_is_active: '{{ hvac_action in g_hvac.monitored_states or fan_running }}'
       door_age: "{% if has_door and states[door_entity] is not none %}\n  {{ as_timestamp(now())
         - as_timestamp(states[door_entity].last_changed, 0) }}\n{% else %}\n  0\n{%
         endif %}\n"

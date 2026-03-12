@@ -8,10 +8,17 @@ binary_sensor:
     device_class: occupancy
     # We removed the delay_off here because the Lutron handles the 5 mins
     state: >
-      {% set stairs = states.binary_sensor.basement_stairs_occupancy %}
-      {% set interior = states.binary_sensor.basement_interior_occupancy %}
-      {% if stairs.state == 'on' or interior.state == 'on' %}
+      {# 1. Load Registry and extract Area Metadata #}
+      {% set registry = state_attr('sensor.global_variable_registry', 'vars') %}
+      {% set meta = registry.area_metadata.basement.occupancy_components %}
+
+      {# 2. Map Registry Pointers to Local Variables #}
+      {% set stairs = states(meta.stairs) %}
+      {% set interior = states(meta.interior) %}
+
+      {# 3. Logic: True if either is 'on', or if they haven't both settled to 'off' #}
+      {% if stairs == 'on' or interior == 'on' %}
         true
       {% else %}
-        {{ not (stairs.state == 'off' and interior.state == 'off') }}
+        {{ not (stairs == 'off' and interior == 'off') }}
       {% endif %}

@@ -16,6 +16,14 @@ This repository uses **Home Assistant Labels** to define area-specific behaviors
 | `night_light` | Defines which lights should activate during `house_is_in_night_posture`. | Accent LEDs, Under-cabinet lighting |
 | `main` | The default hardware group for standard "Auto" transitions. | Overhead dimmers, Chandeliers |
 
+The Reaper Policy:
+
+  Frequency: Runs every 5 minutes.
+
+  Sovereignty: Cannot override a Physical Sabbatical Lock (Door Closed in a Lock-Eligible area).
+
+  Safety Buffer: Will defer expiry if Presence is still detected. The override will persist until the room is vacated, at which point the next Reaper sweep will reclaim the area.
+
 ---
 
 ### 🔄 The State Machine Logic
@@ -149,7 +157,7 @@ A template sensor that monitors all `relay` labeled switches. It concatenates th
 A trigger-based template sensor that stores a `relay_state_map`.
 
 * **Feature:** It only updates when it receives a `set_relay_command` event from the Enforcer.
-* **Safe Discovery:** New devices default to `uninitialized`, preventing accidental switching until a user first interacts with the device.
+* **Safe Discovery:** New devices default to `uninitialized`, preventing accidental switching until a user first interacts with the device. The "Interaction" must come from a Sovereign Source (UI/Physical) to prevent a "System Noise" event from accidentally initializing a device into the wrong state.
 
 #### 3. Universal Relay Enforcer (The Governor)
 
@@ -165,5 +173,84 @@ The "Brain" that manages the relationship between hardware and the Registry.
 1. **Label your entities:** Add the `relay` label to any switch you want to protect.
 2. **Label your areas:** Add `override_eligible` to areas where you want dynamic enrollment.
 3. **Deploy:** Add the `active_relay_source`, `relay_state_registry`, and `universal_relay_enforcer` to your configuration.
+
+---
+The **Expiry Reaper** is the necessary "entropy engine" of your system. Without it, manual overrides would eventually turn your smart home into a collection of "dumb" static switches.
+
+Looking at your draft, you have implemented a crucial safety check: **`not (is_lock_zone and is_area_locked)`**. This respects the "Guest Test" by ensuring that if someone is in a Sabbatical Zone (like the Powder Room) and has physically locked the door, the Reaper won't "murder" their lights just because a timer expired.
+
+### 🔍 Architectural Audit
+
+1. **Trigger Frequency:** You have it set to `hours: /1`. In an ITIL-managed environment, an hour is a long time for a "Ghost" override to persist. I suggest moving to at least every **5 minutes** (`/5`) to ensure the transition from "Override" back to "Automated" feels responsive.
+2. **The "Safety Sweep" Condition:** Your `is_empty` variable is calculated but not currently used in the `if` condition. To truly align with your **HUX (Household User Experience)** principles, the Reaper should probably only fire if the area is *also* empty. If I'm physically in the room and the 2-hour override expires, I don't want to be plunged into darkness while I'm standing there.
+3. **Command Sequence:** You are firing the `turn_off` **before** releasing the override. This is the correct order. If you released the override first, the GPE might see the occupancy and try to "Turn On" the light at the exact same millisecond the Reaper is trying to "Turn Off."
+
+---
+---
+
+## 🛠 Variable Registry Documentation (Node-RED to HA)
+
+This system uses a **Software-Defined Home (SDH)** architecture. Hardware identities are decoupled from automation logic using a Global Variable Registry stored in Node-RED and published via MQTT to `sensor.global_variable_registry`.
+
+### 1. Global Anchors (`globals`)
+
+These entities represent the "Infrastructure" of the home. Changing a physical device (e.g., a new Thermostat) only requires updating the registry.
+
+| Key | Path | Description |
+| --- | --- | --- |
+| **Solar Source** | `environmental.solar_source` | Entity used for elevation (e.g., `sun.sun`). |
+| **Night Sensor** | `environmental.night_posture_sensor` | The binary sensor defining "Night Mode". |
+| **Primary HVAC** | `hvac.primary_unit` | The main climate entity (e.g., `climate.ecobee`). |
+| **CCT Calculation** | `logic_engines.cct_calculation` | The sensor providing target Kelvin values. |
+| **System Log** | `logic_engines.system_log` | The destination for all UCC and Cleaner logs. |
+
+### 2. Area Metadata (`area_metadata`)
+
+Defines relationships and components for specific rooms. This allows the **Recursive Cleaner** and **Presence Orchestrator** to scale without YAML edits.
+
+```json
+"area_metadata": {
+  "AREA_ID": {
+    "occupancy_components": {
+      "stairs": "binary_sensor.xxx",
+      "interior": "binary_sensor.xxx"
+    },
+    "neighbors": {
+      "peer": "ADJOINING_AREA_ID"
+    }
+  }
+}
+
+```
+
+### 3. Occupancy & Timer Schema
+
+The `sensor.lighting_off_registry` (Active Timers) follows this internal schema for every area tracked by the **Recursive Cleaner**:
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `expiry` | ISO8601 | The timestamp when the area state should expire. |
+| `locked` | Boolean | If `true`, the Cleaner will ignore the expiry (Manual Override). |
+| `warned` | Boolean | Tracks if the "Dim Warning" has already been issued. |
+| `skip_warning` | Boolean | If `true`, logic skips the "Dim" phase and goes straight to `off`. |
+
+---
+
+### 📝 Implementation Pattern (Template Example)
+
+To use a registry variable in a Home Assistant action or sensor, use the following pattern:
+
+```yaml
+variables:
+  vars: "{{ state_attr('sensor.global_variable_registry', 'vars') }}"
+  hvac: "{{ vars.globals.hvac.primary_unit }}"
+action:
+  - service: climate.set_hvac_mode
+    target:
+      entity_id: "{{ hvac }}"
+    data:
+      hvac_mode: "off"
+
+```
 
 ---

@@ -3,20 +3,32 @@ sensor:
     unique_id: cct_logic_core
     unit_of_measurement: "K"
     state: |
-      {% set elev = state_attr('sun.sun', 'elevation') | float(0) %}
+      {# 1. Load Registry and extract pointers #}
+      {% set registry = state_attr('sensor.global_variable_registry', 'vars') %}
+      {% set g_env = registry.globals.environmental %}
+      {% set g_help = registry.globals.helpers %}
+
+      {# 2. Dynamic Entity References #}
+      {% set elev = state_attr(g_env.solar_source, 'elevation') | float(0) %}
+      {% set temp_min = states(g_help.cct_min) | int(2000) %}
+      {% set temp_max = states(g_help.cct_max) | int(5500) %}
+
       {% set now_dt = now().strftime('%H:%M') %}
-      {% set temp_min = states('input_number.cct_min') | int(2000) %}
-      {% set temp_max = states('input_number.cct_max') | int(5500) %}
       {% set temp_base = 3200 %}
-      {% if is_state('binary_sensor.party_mode_active', 'on') %}
+
+      {# 3. Mode-Based Wind Down Logic #}
+      {% if is_state(g_env.party_mode, 'on') %}
         {% set wind_down_start = '01:00' %}
-      {% elif is_state('binary_sensor.guest_mode_active', 'on') %}
+      {% elif is_state(g_env.guest_mode, 'on') %}
         {% set wind_down_start = '00:00' %}
       {% else %}
         {% set wind_down_start = '21:30' %}
       {% endif %}
+
+      {# 4. Solar and Time-Based Calculations #}
       {% set start_dt = today_at(wind_down_start) %}
       {% set end_time = (start_dt + timedelta(minutes=90)).strftime('%H:%M') %}
+
       {% if now_dt >= end_time or (now_dt < '05:00' and wind_down_start != '01:00') %}
         {{ temp_min }}
       {% elif now_dt >= wind_down_start %}
@@ -41,10 +53,17 @@ sensor:
       friendly_name: "CCT Logic Core Sensor"
       icon: "mdi:thermometer"
       brightness: |
-        {% set temp_min = states('input_number.cct_min') | int(2000) %}
-        {% set temp_max = states('input_number.cct_max') | int(5500) %}
-        
+        {# 1. Load Registry and extract pointers #}
+        {% set registry = state_attr('sensor.global_variable_registry', 'vars') %}
+        {% set g_env = registry.globals.environmental %}
+        {% set g_help = registry.globals.helpers %}
+
+        {# 2. Dynamic Entity References #}
+        {% set elev = state_attr(g_env.solar_source, 'elevation') | float(0) %}
+        {% set temp_min = states(g_help.cct_min) | int(2000) %}
+        {% set temp_max = states(g_help.cct_max) | int(5500) %}
+
         {% set bright_min = 115 %}
         {% set bright_max = 255 %}
-        
+
         {{ this.state | int(3200) | remap(temp_min, temp_max, bright_min, bright_max) | int }}

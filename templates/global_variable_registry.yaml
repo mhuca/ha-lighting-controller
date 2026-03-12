@@ -1,0 +1,13 @@
+trigger:
+  - trigger: mqtt
+    topic: "home/registry/variables"
+  - trigger: homeassistant
+    event: start
+sensor:
+  - name: "Global Variable Registry"
+    unique_id: global_variable_registry
+    icon: mdi:database-sync
+    state: "Active"
+    attributes:
+      # This converts the MQTT JSON string back into an object
+      vars: "{{ trigger.payload | from_json if trigger.payload is defined else this.attributes.get('vars', {}) }}"
