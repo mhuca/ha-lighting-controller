@@ -1,0 +1,54 @@
+binary_sensor:
+  - name: "Powder Room Entry Logic"
+    unique_id: powder_room_entry_logic
+    device_class: motion
+    delay_off: 30
+    state: >
+      {% set pir = states.binary_sensor.powder_room_motion %}
+      {% if pir is not none %}
+        {% set pir_age = as_timestamp(now()) - as_timestamp(pir.last_changed | default(now())) %}
+        {{ is_state('binary_sensor.powder_room_motion', 'on') and
+          is_state('binary_sensor.powder_room_door', 'on') and 
+          pir_age < 30 }}
+      {% else %} false {% endif %}
+
+  - name: "Powder Room Ghost Veto"
+    unique_id: powder_room_ghost_logic
+    state: >
+      {% set door = states.binary_sensor.powder_room_door %}
+      {% set pir = states.binary_sensor.powder_room_motion %}
+      {% if door is not none and pir is not none %}
+        {% set door_age = as_timestamp(now()) - as_timestamp(door.last_changed | default(now())) %}
+        {% set pir_age = as_timestamp(now()) - as_timestamp(pir.last_changed | default(now())) %}
+        {{ is_state('binary_sensor.powder_room_motion', 'on') and 
+          is_state('binary_sensor.powder_room_door', 'off') and 
+          door_age > 300 and pir_age < 30 }}
+      {% else %} false {% endif %}
+  - name: "Powder Room Locked Entry"
+    unique_id: powder_room_locked_entry
+    device_class: motion
+    delay_off: 30
+    state: >
+      {% set pir = states.binary_sensor.powder_room_motion %}
+      {% set door = states.binary_sensor.powder_room_door %}
+      {% if pir is not none and door is not none %}
+        {% set pir_age = as_timestamp(now()) - as_timestamp(pir.last_changed | default(now())) %}
+        {% set door_age = as_timestamp(now()) - as_timestamp(door.last_changed | default(now())) %}
+        {# Logic: PIR is on, door is closed, and the door was closed recently #}
+        {{ is_state(pir.entity_id, 'on') and is_state(door.entity_id, 'off') and door_age < 300 }}
+      {% else %} false {% endif %}
+  - name: "Powder Room Presence Master"
+    unique_id: powder_room_presence_master
+    device_class: occupancy
+    delay_off: 5
+    state: >
+      {% set prob = state_attr('binary_sensor.powder_room_bayesian_sensor', 'probability') | float(0) %}
+      {% set current_state = is_state('binary_sensor.powder_room_presence_master', 'on') %}
+
+      {% if prob >= 0.90 %}
+        true
+      {% elif prob <= 0.65 %}
+        false
+      {% else %}
+        {{ current_state }}
+      {% endif %}

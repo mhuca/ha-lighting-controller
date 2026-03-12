@@ -1,0 +1,20 @@
+sensor:
+  - name: "Active Sensor Monitor Master"
+    unique_id: active_sensor_monitor_master_001
+    state: >
+      {% set entities = label_entities('presence') + 
+                        label_entities('occupancy') + 
+                        label_entities('door') %}
+
+      {% set active = entities | unique 
+        | expand 
+        | selectattr('state', 'in', ['on', 'off', 'open', 'closed']) 
+        | sort(attribute='last_changed') 
+        | map(attribute='entity_id') | list %}
+
+      {% if active | count > 0 %}
+        {% set lead = active | last %}
+        {{ lead }}@{{ states[lead].last_changed }}
+      {% else %}
+        none
+      {% endif %}

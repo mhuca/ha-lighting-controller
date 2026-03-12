@@ -1,0 +1,12 @@
+trigger:
+  - trigger: state
+    entity_id:
+      - binary_sensor.garage_person
+      - binary_sensor.wesp32_device_mud_room_door_sensor
+binary_sensor:
+  - name: "Garage Presence Master"
+    unique_id: garage_presence_master_001
+    device_class: presence
+    state: >
+      {{ is_state('binary_sensor.garage_person', 'on') or 
+        is_state('binary_sensor.wesp32_device_mud_room_door_sensor', 'on') }}

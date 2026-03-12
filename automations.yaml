@@ -265,6 +265,18 @@
         \ | list }}\n"
       final_target_data: "{% if is_whole_area %}\n  {{ {\"area_id\": area_key} }}\n{%
         else %}\n  {{ {\"entity_id\": final_targets} }}\n{% endif %}\n"
+      log_nominee: "{% if final_targets | length > 0 %}\n  {{ final_targets | first
+        }}\n{% else %}\n  {% set main_light = area_lights | intersect(label_entities('main'))
+        | first | default('none') %}\n  {{ main_light if main_light != 'none' else
+        (area_lights | first | default('sensor.ucc_registry_log')) }}\n{% endif %}\n"
+      telemetry: '{% set t_id = trigger.id | default(''Event'') %}
+
+        {% set src = payload.source_device | default(''unknown'') %}
+
+        [ID: {{ t_id }} | Src: {{ src }} | Val: {{ action_value | default(''none'')
+        }}]
+
+        '
   - if:
     - condition: template
       value_template: '{{ final_target_data.area_id is defined or (final_target_data.entity_id
@@ -277,8 +289,16 @@
       data:
         name: Light Engine (Off)
         message: 'Turned off {{ final_targets | length }} lights in {{ area_key }}.
-          (Source: {{ payload.source_device | default('''') }}) {{this.entity_id}}'
+          (Source: {{ payload.source_device | default('''') }}) {{this.entity_id}}
+          {{ telemetry }}'
         entity_id: sensor.ucc_registry_log
+    - action: logbook.log
+      data:
+        name: Light Engine (Off)
+        message: 'Turned off {{ final_targets | length }} lights in {{ area_key }}.
+          (Source: {{ payload.source_device | default('''') }}) {{this.entity_id}}
+          {{ telemetry }}'
+        entity_id: '{{ log_nominee }}'
     else:
     - alias: Silent Skip
       stop: All target lights are already off. Mesh silenced.
@@ -1888,7 +1908,7 @@
   mode: parallel
   max: 10
 - id: '1772982255001'
-  alias: Executive - Recursive Registry Cleaner
+  alias: Bridge - Global Presence Recursive Registry Cleaner
   description: Iterates through the Registry with support for Skip-Warning (Transient)
     logic
   triggers:
@@ -1929,6 +1949,7 @@
               action_type: light_call
               command_input: turn_off
               area_key: '{{ area_key }}'
+              source_device: Global Presence Cleaner
           - event: lighting_registry_update
             event_data:
               action: remove
@@ -1949,6 +1970,7 @@
               command_input: turn_on
               action_value: min
               area_key: '{{ area_key }}'
+              source_device: Global Presence Cleaner
           - event: lighting_registry_update
             event_data:
               action: warned
@@ -1967,6 +1989,7 @@
               action_type: light_call
               command_input: turn_off
               area_key: '{{ area_key }}'
+              source_device: Global Presence Cleaner
           - event: lighting_registry_update
             event_data:
               action: remove
@@ -2089,7 +2112,7 @@
   description: Determines 5s/30s/120s/Lock logic based on the sensor's Area and Labels
   triggers:
   - trigger: state
-    entity_id: sensor.active_sensor_monitor
+    entity_id: sensor.active_sensor_monitor_master
   conditions:
   - condition: template
     value_template: "{{ trigger.to_state.state not in ['none', 'unknown', 'unavailable']
@@ -2097,10 +2120,10 @@
   - condition: template
     value_template: "{% set source_entity = trigger.to_state.state %} \n{% set area
       = area_id(source_entity) %} \n{% set overrides = state_attr('sensor.active_area_overrides',
-      'overridden_areas') or [] %} \n{{ area not in overrides }}\n"
+      'overridden_areas') or [] %} \n\n{{ area not in overrides }}\n"
   actions:
   - variables:
-      source_entity: '{{ trigger.to_state.state }}'
+      source_entity: '{{ trigger.to_state.state.split(''@'')[0] }}'
       area_key: '{{ area_id(source_entity) | default(''none'') }}'
       entity_labels: '{{ labels(source_entity) }}'
       event_ts: '{{ states[source_entity].last_changed }}'
@@ -2129,6 +2152,24 @@
       registry_entry: '{{ (state_attr(''sensor.lighting_off_registry'', ''active_timers'')
         or {}).get(area_key, {}) }}'
       is_area_locked: '{{ registry_entry.get(''locked'', false) }}'
+      peer_area_map:
+        mud_room: garage
+        garage: mud_room
+      adjoining_area: '{{ peer_area_map.get(area_key, ''none'') }}'
+      should_trigger_peer: '{{ is_door and is_on and area_key != ''none'' and adjoining_area
+        != ''none'' }}
+
+        '
+      door_age: '{{ as_timestamp(now()) - as_timestamp(states[door_entity].last_changed
+        | default(0)) }}'
+      is_ghost: '{{ is_presence and is_on and has_door and (not is_state(door_entity,
+        ''on'')) and door_age > 600 }}'
+      should_lock_area: '{{ is_presence and is_on and has_door and (not is_state(door_entity,
+        ''on'')) and door_age < 360 and is_lock_eligible }}
+
+        '
+      valid_presence_detected: '{{ is_on and (not is_ghost) }}'
+      execution_blocked_by_lock: '{{ is_area_locked and (not is_door) }}'
   - choose:
     - conditions:
       - condition: template
@@ -2156,7 +2197,7 @@
         data:
           name: Bridge Orchestrator
           message: Light Turn On. Listener
-          entity_id: '{{ trigger.to_state.state }}'
+          entity_id: '{{ source_entity }}'
     - conditions:
       - alias: Door Or Presence Is On with No Locks
         condition: template
@@ -2175,7 +2216,7 @@
         data:
           name: Bridge Orchestrator
           message: Light Registry Start Cleaner
-          entity_id: '{{ trigger.to_state.state }}'
+          entity_id: '{{ source_entity }}'
       alias: Cleared and Unlocked
     - conditions:
       - condition: template
@@ -2194,7 +2235,7 @@
         data:
           name: Bridge Orchestrator
           message: Light Registry Timer Reset Door Closed
-          entity_id: '{{ trigger.to_state.state }}'
+          entity_id: '{{ source_entity }}'
     - conditions:
       - alias: Presence Is On with Door Closed
         condition: template
@@ -2210,7 +2251,7 @@
         data:
           name: Bridge Orchestrator
           message: Light Registry Locked Presence with Door Closed
-          entity_id: '{{ trigger.to_state.state }}'
+          entity_id: '{{ source_entity }}'
     - conditions:
       - condition: template
         value_template: '{{ is_presence and is_on and ( not has_door or is_state(door_entity,
@@ -2227,7 +2268,7 @@
         data:
           name: Bridge Orchestrator
           message: Light Registry Presence Reset Timer - Door Open Unlocked
-          entity_id: '{{ trigger.to_state.state }}'
+          entity_id: '{{ source_entity }}'
       alias: Presence Is On
   mode: parallel
   max: 20
@@ -2253,6 +2294,13 @@
       area_key: '{{ area_key }}'
       command_input: '{{ states[source_entity].state }}'
       data_payload: '{{ src }}'
+  - action: logbook.log
+    metadata: {}
+    data:
+      name: Lighting Override Engine
+      message: 'Override for {{ area_key }} State: {{ states[source_entity].state
+        }} via UCC Bus'
+      entity_id: '{{ source_entity }}'
   mode: parallel
   max: 20
 - id: '1773168023699'
@@ -2266,11 +2314,9 @@
     trigger: event
   conditions:
   - condition: template
-    value_template: '{% set area_key = trigger.event.data.area_key %} {% set cmd =
-      trigger.event.data.command_input %} {% set areas = label_areas(''override_eligible'')
-      %} {{ area_key in areas and cmd in [''turn_on'', ''turn_off''] }}
-
-      '
+    value_template: "{% set area_key = trigger.event.data.area_key %} \n{% set cmd
+      = trigger.event.data.command_input %} \n{% set areas = label_areas('override_eligible')
+      %} \n\n{{ area_key in areas and cmd in ['turn_on', 'turn_off'] }}\n"
   actions:
   - variables:
       area_key: '{{ trigger.event.data.area_key }}'

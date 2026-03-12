@@ -93,22 +93,63 @@ living_room_day:
       command_input: turn_on
       target_label:
       - lamp
-      - main
       area_key: living_room
       data_payload: ''
       overrides: {}
-  - alias: Universal Controller Command Event - Hallway On
-    event: universal_controller_command
-    event_data:
-      source_device: light_scene
-      action_type: light_call
-      action_value: '{{ states(''sensor.cct_to_brightness'') | int }}'
-      command_input: turn_on
-      target_label:
-      - bar_servery
-      area_key: hallway
-      data_payload: ''
-      overrides: {}
+  - if:
+    - condition: state
+      entity_id: binary_sensor.night_light_sensor
+      state: 'on'
+    then:
+    - alias: Universal Controller Command Event - Living Room Off
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: ''
+        command_input: turn_off
+        target_label:
+        - main
+        area_key: living_room
+        data_payload: ''
+        overrides: {}
+    - alias: Universal Controller Command Event - Hallway Off
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: ''
+        command_input: turn_off
+        target_label:
+        - bar_servery
+        area_key: hallway
+        data_payload: ''
+        overrides: {}
+    else:
+    - alias: Universal Controller Command Event - Living Room On
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: 150
+        command_input: turn_on
+        target_label:
+        - main
+        area_key: living_room
+        data_payload: ''
+        overrides: {}
+    - alias: Universal Controller Command Event - Hallway On
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: '{{ states(''sensor.cct_to_brightness'') | int }}'
+        command_input: turn_on
+        target_label:
+        - bar_servery
+        area_key: hallway
+        data_payload: ''
+        overrides: {}
   - alias: Universal Controller Command Event - Hallway Off
     event: universal_controller_command
     event_data:
@@ -141,16 +182,6 @@ living_room_day:
       area_key: dining_room
       data_payload: ''
       overrides: {}
-  - delay:
-      hours: 0
-      minutes: 0
-      seconds: 0
-      milliseconds: 150
-  - delay:
-      hours: 0
-      minutes: 0
-      seconds: 0
-      milliseconds: 150
   alias: Living Room 50. Day
   description: ''
 living_room_entertain:
@@ -164,7 +195,6 @@ living_room_entertain:
       command_input: turn_on
       target_label:
       - lamp
-      - main
       area_key: living_room
       data_payload: ''
       overrides: {}
@@ -181,18 +211,60 @@ living_room_entertain:
       area_key: living_room
       data_payload: ''
       overrides: {}
-  - alias: Universal Controller Command Event - Hallway On
-    event: universal_controller_command
-    event_data:
-      source_device: light_scene
-      action_type: light_call
-      action_value: '{{ states(''sensor.cct_to_brightness'') | int }}'
-      command_input: turn_on
-      target_label:
-      - bar_servery
-      area_key: hallway
-      data_payload: ''
-      overrides: {}
+  - if:
+    - condition: state
+      entity_id: binary_sensor.night_light_sensor
+      state: 'on'
+    then:
+    - alias: Universal Controller Command Event - Living Room Off
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: ''
+        command_input: turn_off
+        target_label:
+        - main
+        area_key: living_room
+        data_payload: ''
+        overrides: {}
+    - alias: Universal Controller Command Event - Hallway Off
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: ''
+        command_input: turn_off
+        target_label:
+        - bar_servery
+        area_key: hallway
+        data_payload: ''
+        overrides: {}
+    else:
+    - alias: Universal Controller Command Event - Living Room On
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: 205
+        command_input: turn_on
+        target_label:
+        - main
+        area_key: living_room
+        data_payload: ''
+        overrides: {}
+    - alias: Universal Controller Command Event - Hallway On
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: '{{ states(''sensor.cct_to_brightness'') | int }}'
+        command_input: turn_on
+        target_label:
+        - bar_servery
+        area_key: hallway
+        data_payload: ''
+        overrides: {}
   - alias: Universal Controller Command Event - Hallway Off
     event: universal_controller_command
     event_data:
@@ -253,26 +325,6 @@ living_room_entertain:
         area_key: dining_room
         data_payload: ''
         overrides: {}
-  - delay:
-      hours: 0
-      minutes: 0
-      seconds: 0
-      milliseconds: 150
-  - delay:
-      hours: 0
-      minutes: 0
-      seconds: 0
-      milliseconds: 150
-  - delay:
-      hours: 0
-      minutes: 0
-      seconds: 0
-      milliseconds: 150
-  - delay:
-      hours: 0
-      minutes: 0
-      seconds: 0
-      milliseconds: 150
   alias: Living Room 80. Entertain
   description: ''
 living_room_lights_off:
@@ -563,7 +615,6 @@ living_room_85_entertain_max:
       command_input: turn_on
       target_label:
       - lamp
-      - main
       area_key: living_room
       data_payload: ''
       overrides: {}
@@ -579,18 +630,60 @@ living_room_85_entertain_max:
       area_key: living_room
       data_payload: ''
       overrides: {}
-  - alias: Universal Controller Command Event - Hallway On
-    event: universal_controller_command
-    event_data:
-      source_device: light_scene
-      action_type: light_call
-      action_value: '{{ states(''sensor.cct_to_brightness'') | int }}'
-      command_input: turn_on
-      target_label:
-      - bar_servery
-      area_key: hallway
-      data_payload: ''
-      overrides: {}
+  - if:
+    - condition: state
+      entity_id: binary_sensor.night_light_sensor
+      state: 'on'
+    then:
+    - alias: Universal Controller Command Event - Living Room Off
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: ''
+        command_input: turn_off
+        target_label:
+        - main
+        area_key: living_room
+        data_payload: ''
+        overrides: {}
+    - alias: Universal Controller Command Event - Hallway Off
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: ''
+        command_input: turn_off
+        target_label:
+        - bar_servery
+        area_key: hallway
+        data_payload: ''
+        overrides: {}
+    else:
+    - alias: Universal Controller Command Event - Living Room On
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: 205
+        command_input: turn_on
+        target_label:
+        - main
+        area_key: living_room
+        data_payload: ''
+        overrides: {}
+    - alias: Universal Controller Command Event - Hallway On
+      event: universal_controller_command
+      event_data:
+        source_device: light_scene
+        action_type: light_call
+        action_value: '{{ states(''sensor.cct_to_brightness'') | int }}'
+        command_input: turn_on
+        target_label:
+        - bar_servery
+        area_key: hallway
+        data_payload: ''
+        overrides: {}
   - alias: Universal Controller Command Event - Hallway Off
     event: universal_controller_command
     event_data:
@@ -656,26 +749,6 @@ living_room_85_entertain_max:
       data_payload: ''
       overrides: {}
     enabled: false
-  - delay:
-      hours: 0
-      minutes: 0
-      seconds: 0
-      milliseconds: 150
-  - delay:
-      hours: 0
-      minutes: 0
-      seconds: 0
-      milliseconds: 150
-  - delay:
-      hours: 0
-      minutes: 0
-      seconds: 0
-      milliseconds: 150
-  - delay:
-      hours: 0
-      minutes: 0
-      seconds: 0
-      milliseconds: 150
   alias: Living Room 85. Entertain Max
   description: ''
 living_room_00_lights_off:
