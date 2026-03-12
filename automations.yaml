@@ -2109,7 +2109,7 @@
   max: 10
 - id: '1773049447479'
   alias: Bridge - Global Presence Orchestrator
-  description: Determines 5s/30s/120s/Lock logic based on the sensor's Area and Labels
+  description: Determines 5s/30s/120s/Lock logic. Bayesian + Climate Aware.
   triggers:
   - trigger: state
     entity_id: sensor.active_sensor_monitor_master
@@ -2120,7 +2120,7 @@
   - condition: template
     value_template: "{% set source_entity = trigger.to_state.state %} \n{% set area
       = area_id(source_entity) %} \n{% set overrides = state_attr('sensor.active_area_overrides',
-      'overridden_areas') or [] %} \n\n{{ area not in overrides }}\n"
+      'overridden_areas') or [] %} \n{{ area not in overrides }}\n"
   actions:
   - variables:
       source_entity: '{{ trigger.to_state.state.split(''@'')[0] }}'
@@ -2129,10 +2129,8 @@
       event_ts: '{{ states[source_entity].last_changed }}'
       is_on: '{{ is_state(source_entity, ''on'') }}'
       has_presence_capability: '{{ (area_entities(area_key) | intersect(label_entities(''presence''))
-        | count) > 0 }}
-
-        '
-      is_door: '{{ ''door'' in entity_labels  }}'
+        | count) > 0 }}'
+      is_door: '{{ ''door'' in entity_labels }}'
       is_presence: '{{ ''presence'' in entity_labels }}'
       area_policy: '{{ labels(area_key) }}'
       is_night_policy_enabled: '{{ ''night_light'' in area_policy }}'
@@ -2142,11 +2140,11 @@
         }}'
       final_action_value: '{{ ''night_mode'' if use_night_settings else ''day_mode''
         }}'
-      final_target_label: "{% if use_night_settings %}\n  {{ ['night_light'] }}\n{%
-        elif is_night_policy_enabled %}\n  {{ ['main'] }}\n{% else %}\n  {{ [] }}\n{%
-        endif %}\n"
-      door_entity: "{{ (area_entities(area_key) \n  | intersect(label_entities('door')))
-        \n  | first \n  | default('none') }}\n"
+      final_target_label: "{% if use_night_settings %} \n  {{ ['night_light'] }} \n{%
+        elif is_night_policy_enabled %}\n  {{ ['main'] }} \n{% else %} \n  {{ [] }}
+        \n{% endif %}\n"
+      door_entity: '{{ (area_entities(area_key) | intersect(label_entities(''door'')))
+        | first | default(''none'') }}'
       has_door: '{{ door_entity != ''none'' }}'
       is_lock_zone: '{{ ''lock_eligible'' in area_policy }}'
       registry_entry: '{{ (state_attr(''sensor.lighting_off_registry'', ''active_timers'')
@@ -2157,25 +2155,54 @@
         garage: mud_room
       adjoining_area: '{{ peer_area_map.get(area_key, ''none'') }}'
       should_trigger_peer: '{{ is_door and is_on and area_key != ''none'' and adjoining_area
-        != ''none'' }}
-
-        '
-      door_age: '{{ as_timestamp(now()) - as_timestamp(states[door_entity].last_changed
-        | default(0)) }}'
-      is_ghost: '{{ is_presence and is_on and has_door and (not is_state(door_entity,
-        ''on'')) and door_age > 600 }}'
-      should_lock_area: '{{ is_presence and is_on and has_door and (not is_state(door_entity,
-        ''on'')) and door_age < 360 and is_lock_eligible }}
-
-        '
-      valid_presence_detected: '{{ is_on and (not is_ghost) }}'
-      execution_blocked_by_lock: '{{ is_area_locked and (not is_door) }}'
+        != ''none'' }}'
+      hvac_action: '{{ state_attr(''climate.my_ecobee'', ''hvac_action'') | default(''idle'')
+        }}'
+      fan_running: '{{ is_state_attr(''climate.my_ecobee'', ''fan'', ''on'') }}'
+      hvac_is_active: '{{ hvac_action in [''heating'', ''cooling'', ''fan''] or fan_running
+        }}'
+      door_age: "{% if has_door and states[door_entity] is not none %}\n  {{ as_timestamp(now())
+        - as_timestamp(states[door_entity].last_changed, 0) }}\n{% else %}\n  0\n{%
+        endif %}\n"
+      is_door_closed: '{{ is_state(door_entity, ''off'') if has_door else false }}'
+      is_ghost: "{% if not has_door %} \n  {{ false }}\n{% else %}\n  {% set is_closed
+        = is_state(door_entity, 'off') %}\n  {{ is_presence and is_on and is_closed
+        and (door_age > 600 or hvac_is_active) }}\n{% endif %}\n"
+      should_lock_area: "{% if not has_door or 'lock_eligible' not in area_policy
+        %} \n  {{ false }}\n{% else %}\n  {% set is_closed = is_state(door_entity,
+        'off') %}\n  {{ is_presence and is_on and is_closed and door_age < 360 }}\n{%
+        endif %}\n"
   - choose:
-    - conditions:
+    - alias: Veto Log (Ghost Detected)
+      conditions:
+      - condition: template
+        value_template: '{{ is_presence and is_on and is_ghost }}'
+      sequence:
+      - action: logbook.log
+        data:
+          name: Bridge Orchestrator
+          message: 'GPE VETO: Ghost in {{ area_key }} (HVAC: {{ hvac_action }}, Door
+            Age: {{ door_age | int }}s)'
+          entity_id: '{{ source_entity }}'
+    - alias: Lock Presence (Sabbatical)
+      conditions:
+      - condition: template
+        value_template: '{{ should_lock_area and not is_area_locked }}'
+      sequence:
+      - event: lighting_registry_update
+        event_data:
+          action: lock
+          area_key: '{{ area_key }}'
+      - action: logbook.log
+        data:
+          name: Bridge Orchestrator
+          message: 'GPE: Registry LOCKED'
+          entity_id: '{{ source_entity }}'
+    - alias: Valid Turn On (Anti-Ghosting)
+      conditions:
       - condition: template
         value_template: '{{ (is_door or is_presence) and is_on and not is_area_locked
-          }}'
-        alias: Door Or Presence Is On with No Locks
+          and not is_ghost }}'
       sequence:
       - event: universal_controller_command
         event_data:
@@ -2185,22 +2212,15 @@
           action_value: '{{ final_action_value }}'
           target_label: '{{ final_target_label }}'
           source_device: monitor
-          data_payload: '{{ trigger.to_state }}'
       - event: lighting_registry_update
         event_data:
           action: remove
           area_key: '{{ area_key }}'
           seconds: '{{ 120 if has_presence_capability else 1800 }}'
           timestamp: '{{ event_ts }}'
-      - action: logbook.log
-        metadata: {}
-        data:
-          name: Bridge Orchestrator
-          message: Light Turn On. Listener
-          entity_id: '{{ source_entity }}'
-    - conditions:
-      - alias: Door Or Presence Is On with No Locks
-        condition: template
+    - alias: Presence Cleared (Start Cleaner)
+      conditions:
+      - condition: template
         value_template: '{{ is_presence and not is_on and not is_area_locked }}'
       sequence:
       - event: lighting_registry_update
@@ -2211,17 +2231,10 @@
           skip_warning: '{{ not is_lock_zone }}'
           timestamp: '{{ event_ts }}'
       - event: start_registry_cleaner
-      - action: logbook.log
-        metadata: {}
-        data:
-          name: Bridge Orchestrator
-          message: Light Registry Start Cleaner
-          entity_id: '{{ source_entity }}'
-      alias: Cleared and Unlocked
-    - conditions:
+    - alias: Door Closed Timer Reset
+      conditions:
       - condition: template
         value_template: '{{ is_door and not is_on }}'
-        alias: Door Closed
       sequence:
       - event: lighting_registry_update
         event_data:
@@ -2230,32 +2243,11 @@
           seconds: '{{ 30 if has_presence_capability else 5 }}'
           skip_warning: '{{ not is_lock_zone }}'
           timestamp: '{{ event_ts }}'
-      - action: logbook.log
-        metadata: {}
-        data:
-          name: Bridge Orchestrator
-          message: Light Registry Timer Reset Door Closed
-          entity_id: '{{ source_entity }}'
-    - conditions:
-      - alias: Presence Is On with Door Closed
-        condition: template
-        value_template: '{{ is_presence and is_on and has_door and is_state(door_entity,
-          ''off'') }}'
-      sequence:
-      - event: lighting_registry_update
-        event_data:
-          action: lock
-          area_key: '{{ area_key }}'
-      - action: logbook.log
-        metadata: {}
-        data:
-          name: Bridge Orchestrator
-          message: Light Registry Locked Presence with Door Closed
-          entity_id: '{{ source_entity }}'
-    - conditions:
+    - alias: Presence Update (Door Open)
+      conditions:
       - condition: template
-        value_template: '{{ is_presence and is_on and ( not has_door or is_state(door_entity,
-          ''on'') )}}'
+        value_template: '{{ is_presence and is_on and (not has_door or is_state(door_entity,
+          ''on'')) }}'
       sequence:
       - event: lighting_registry_update
         event_data:
@@ -2263,13 +2255,17 @@
           area_key: '{{ area_key }}'
           seconds: 120
           timestamp: '{{ event_ts }}'
-      - action: logbook.log
-        metadata: {}
-        data:
-          name: Bridge Orchestrator
-          message: Light Registry Presence Reset Timer - Door Open Unlocked
-          entity_id: '{{ source_entity }}'
-      alias: Presence Is On
+  - if:
+    - condition: template
+      value_template: '{{ should_trigger_peer }}'
+    then:
+    - event: universal_controller_command
+      event_data:
+        action_type: light_call
+        command_input: turn_on
+        area_key: '{{ adjoining_area }}'
+        action_value: '{{ final_action_value }}'
+        source_device: peer_preheat
   mode: parallel
   max: 20
 - id: '1773161819691'
