@@ -1,0 +1,23 @@
+trigger:
+  - trigger: state
+    entity_id: sensor.back_person_master
+binary_sensor:
+  - name: "Backyard Presence Master"
+    unique_id: backyard_presence_master
+    device_class: occupancy
+    delay_off:
+      minutes: 2
+    state: >
+      {% set registry = state_attr('sensor.global_variable_registry', 'vars') %}
+      {% set g_env = registry.globals.environmental %}
+      {% set house_is_in_night_posture = is_state(g_env.night_posture_sensor, 'on') %}
+
+      {# 1. Find all cameras labeled 'person' AND 'back' #}
+      {% set entities = label_entities('person') | intersect(label_entities('back')) %}
+
+      {# 2. Check if ANY are active #}
+      {% set any_active = expand(entities) 
+          | selectattr('state', 'eq', 'on') | list | count > 0 %}
+
+      {# 3. Logic Gate #}
+      {{ house_is_in_night_posture and any_active }}

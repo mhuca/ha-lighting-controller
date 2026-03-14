@@ -904,3 +904,85 @@ system_global_registry_health_check:
         name: Registry Health Check
         message: ✅ All {{ all_entities | count }} registry entities verified and online.
         entity_id: '{{ registry.globals.logic_engines.system_log }}'
+living_room_15_movie_plus:
+  sequence:
+  - alias: Universal Controller Command Event - Living Room Wall
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: 190
+      command_input: turn_on
+      target_label:
+      - living_room_wall_down_light
+      - living_room_wall_up_light
+      area_key: living_room
+      data_payload: ''
+      overrides: {}
+  - alias: Universal Controller Command Event - Living Room Lamp
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: 120
+      command_input: turn_on
+      target_label:
+      - lamp
+      area_key: living_room
+      data_payload: ''
+      overrides: {}
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 50
+  - alias: Universal Controller Command Event - Living Room Off
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: ''
+      command_input: turn_off
+      target_label:
+      - main
+      area_key: living_room
+      data_payload: ''
+      overrides: {}
+  - alias: Universal Controller Command Event - Hallway Off
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: ''
+      command_input: turn_off
+      target_label:
+      - back
+      - bar
+      - ring
+      area_key: hallway
+      data_payload: ''
+      overrides: {}
+  - alias: Universal Controller Command Event - Dining Room Off
+    event: universal_controller_command
+    event_data:
+      source_device: light_scene
+      action_type: light_call
+      action_value: ''
+      command_input: turn_off
+      target_label: []
+      area_key: dining_room
+      data_payload: ''
+      overrides: {}
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 250
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 250
+  alias: Living Room 15. Movie (Plus)
+  description: ''
+  fields: {}

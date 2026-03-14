@@ -1,0 +1,32 @@
+trigger:
+  - trigger: state
+    entity_id:
+      - sensor.front_person_master
+binary_sensor:
+  - name: "Front Person Presence Master"
+    unique_id: front_person_presence_master
+    device_class: occupancy
+    delay_off:
+      minutes: 2
+    # We removed the delay_off here because the Lutron handles the 5 mins
+    state: >
+      {% set registry = state_attr('sensor.global_variable_registry', 'vars') %}
+      {% set house_is_in_night_posture = is_state(registry.globals.environmental.night_posture_sensor, 'on') %}
+
+      {# 2. Find all 'Person' entities in this area #}
+      {% set entities = label_entities('person') | intersect(label_entities('front')) %}
+
+      {# 3. Evaluation: Is ANY camera currently 'on'? #}
+      {% set any_active = expand(entities) 
+        | selectattr('state', 'eq', 'on') | list | count > 0 %}
+
+      {# 4. Final Logic with Boolean Cheat #}
+      {% if house_is_in_night_posture and any_active %}
+        {{ 1 == 1 }}
+      {% else %}
+        {{ -1 > 0 }}
+      {% endif %}
+    attributes:
+      last_source: >
+        {% set state = states('sensor.front_person_master') %}
+        {{ state.split('@')[0] if '@' in state else state }}

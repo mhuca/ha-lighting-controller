@@ -1921,6 +1921,8 @@
   - trigger: event
     event_type: start_registry_cleaner
   - trigger: event
+    event_type: esphome.start_registry_cleaner
+  - trigger: event
     event_type: cleaner_heartbeat
   - trigger: state
     entity_id: sensor.lighting_off_registry
@@ -2132,10 +2134,15 @@
       'overridden_areas') or [] %} \n{{ area not in overrides }}\n"
   actions:
   - variables:
-      registry: '{{ state_attr(''sensor.global_variable_registry'', ''vars'') }}'
-      g_env: '{{ registry.globals.environmental }}'
-      g_hvac: '{{ registry.globals.hvac }}'
-      g_logic: '{{ registry.globals.logic_engines }}'
+      registry: '{% set r = state_attr(''sensor.global_variable_registry'', ''vars'')
+        %} {{ r if r is not none else {} }}'
+      g_env: '{{ registry.get(''globals'', {}).get(''environmental'', {}) }}'
+      g_hvac: '{{ registry.get(''globals'', {}).get(''hvac'', {}) }}'
+      g_logic: '{{ registry.get(''globals'', {}).get(''logic_engines'', {}) }}'
+      is_ready: '{{ g_env != {} }}'
+  - condition: template
+    value_template: '{{ is_ready }}'
+  - variables:
       source_entity: '{{ trigger.to_state.state.split(''@'')[0] }}'
       area_key: '{{ area_id(source_entity) | default(''none'') }}'
       entity_labels: '{{ labels(source_entity) }}'
@@ -2143,7 +2150,6 @@
       is_on: '{{ is_state(source_entity, ''on'') }}'
       has_presence_capability: '{{ (area_entities(area_key) | intersect(label_entities(''presence''))
         | count) > 0 }}'
-      is_door: '{{ ''door'' in entity_labels }}'
       is_presence: '{{ ''presence'' in entity_labels }}'
       area_policy: '{{ labels(area_key) }}'
       is_night_policy_enabled: '{{ ''night_light'' in area_policy }}'
@@ -2156,6 +2162,10 @@
       final_target_label: "{% if use_night_settings %} \n  {{ ['night_light'] }} \n{%
         elif is_night_policy_enabled %}\n  {{ ['main'] }} \n{% else %} \n  {{ [] }}
         \n{% endif %}\n"
+      adjoining_area: '{{ registry.area_metadata.get(area_key, {}).get(''neighbors'',
+        {}).get(''peer'', ''none'') }}'
+      is_entrance: '{{ ''entrance'' in entity_labels }}'
+      is_door: '{{ ''door'' in entity_labels }}'
       door_entity: '{{ (area_entities(area_key) | intersect(label_entities(''door'')))
         | first | default(''none'') }}'
       has_door: '{{ door_entity != ''none'' }}'
@@ -2163,8 +2173,6 @@
       registry_entry: '{{ (state_attr(g_logic.lighting_off_registry, ''active_timers'')
         or {}).get(area_key, {}) }}'
       is_area_locked: '{{ registry_entry.get(''locked'', false) }}'
-      adjoining_area: '{{ registry.area_metadata.get(area_key, {}).get(''neighbors'',
-        {}).get(''peer'', ''none'') }}'
       should_trigger_peer: '{{ is_door and is_on and area_key != ''none'' and adjoining_area
         != ''none'' }}'
       hvac_action: '{{ state_attr(g_hvac.primary_unit, ''hvac_action'') | default(''idle'')
@@ -2175,13 +2183,16 @@
         - as_timestamp(states[door_entity].last_changed, 0) }}\n{% else %}\n  0\n{%
         endif %}\n"
       is_door_closed: '{{ is_state(door_entity, ''off'') if has_door else false }}'
-      is_ghost: "{% if not has_door %} \n  {{ false }}\n{% else %}\n  {% set is_closed
-        = is_state(door_entity, 'off') %}\n  {{ is_presence and is_on and is_closed
-        and (door_age > 600 or hvac_is_active) }}\n{% endif %}\n"
-      should_lock_area: "{% if not has_door or 'lock_eligible' not in area_policy
-        %} \n  {{ false }}\n{% else %}\n  {% set is_closed = is_state(door_entity,
-        'off') %}\n  {{ is_presence and is_on and is_closed and door_age < 360 }}\n{%
-        endif %}\n"
+      is_privacy_zone: '{{ has_door and ''lock_eligible'' in area_policy }}'
+      is_ghost: "{% if not has_door %} \n  {{ false }}\n{% else %}\n  {{ is_presence
+        and is_on and is_door_closed and not is_area_locked and (door_age > 600 or
+        hvac_is_active) }}\n{% endif %}\n"
+      should_lock_area: "{% if not is_privacy_zone %}\n  {{ false }}\n{% else %}\n
+        \ {{ is_presence and is_on and is_door_closed and not is_area_locked and door_age
+        < 120 }}\n{% endif %}\n"
+      should_unlock_area: "{% if is_area_locked %}\n   {# Safety: Clear lock if motion
+        stops OR if the door is physically opened #}\n   {{ not is_on or (has_door
+        and not is_door_closed) }}\n{% else %}\n   {{ false }}\n{% endif %}\n"
   - choose:
     - alias: Veto Log (Ghost Detected)
       conditions:
@@ -2190,9 +2201,9 @@
       sequence:
       - action: logbook.log
         data:
-          name: Bridge Orchestrator
+          name: GPE VETO
           message: 'GPE VETO: Ghost in {{ area_key }} (HVAC: {{ hvac_action }}, Door
-            Age: {{ door_age | int }}s)'
+            Age: {{ door_age | int }}s, Lock Status: {{ is_area_locked}})'
           entity_id: '{{ source_entity }}'
     - alias: Lock Presence (Sabbatical)
       conditions:
@@ -2205,14 +2216,16 @@
           area_key: '{{ area_key }}'
       - action: logbook.log
         data:
-          name: Bridge Orchestrator
-          message: 'GPE: Registry LOCKED'
+          name: GPE LOCKED
+          message: 'Locked Via {{ ''Motion'' if is_presence else ''Portal'' }} Room
+            {{ area_key }} (Registry Reset{% if has_door %}, Door Age: {{ door_age
+            | int }}s{% endif %})'
           entity_id: '{{ source_entity }}'
     - alias: Valid Turn On (Anti-Ghosting)
       conditions:
       - condition: template
-        value_template: '{{ (is_door or is_presence) and is_on and not is_area_locked
-          and not is_ghost }}'
+        value_template: '{{ (is_entrance or is_door or (is_presence and not is_area_locked))
+          and is_on and not is_ghost }}'
       sequence:
       - event: universal_controller_command
         event_data:
@@ -2226,8 +2239,22 @@
         event_data:
           action: remove
           area_key: '{{ area_key }}'
-          seconds: '{{ 120 if has_presence_capability else 1800 }}'
-          timestamp: '{{ event_ts }}'
+      - action: logbook.log
+        data:
+          name: GPE
+          message: 'Turn On: Via {{''Motion'' if is_presence else ''Portal'' }} Room
+            {{ area_key }} (Registry Reset, Door Age: {{ door_age | int }}s)'
+          entity_id: '{{ source_entity }}'
+      - if:
+        - condition: template
+          value_template: '{{ is_door }}'
+        then:
+        - event: lighting_registry_update
+          event_data:
+            action: add
+            area_key: '{{ area_key }}'
+            seconds: 10
+            timestamp: '{{ event_ts }}'
     - alias: Presence Cleared (Start Cleaner)
       conditions:
       - condition: template
@@ -2241,6 +2268,12 @@
           skip_warning: '{{ not is_lock_zone }}'
           timestamp: '{{ event_ts }}'
       - event: start_registry_cleaner
+      - action: logbook.log
+        data:
+          name: 'GPE Start '
+          message: 'GPE: Start Cleaner {{ area_key }} Seconds: "{{ 120 if has_presence_capability
+            else 1800 }}" Skip Warning: "{{ not is_lock_zone }}"'
+          entity_id: '{{ source_entity }}'
     - alias: Door Closed Timer Reset
       conditions:
       - condition: template
@@ -2253,11 +2286,17 @@
           seconds: '{{ 30 if has_presence_capability else 5 }}'
           skip_warning: '{{ not is_lock_zone }}'
           timestamp: '{{ event_ts }}'
+      - action: logbook.log
+        data:
+          name: GPE Add
+          message: 'GPE: Door Warning {{ area_key }} seconds: "{{ 30 if has_presence_capability
+            else 5 }}" skip_warning: "{{ not is_lock_zone }}"'
+          entity_id: '{{ source_entity }}'
     - alias: Presence Update (Door Open)
       conditions:
       - condition: template
-        value_template: '{{ is_presence and is_on and (not has_door or is_state(door_entity,
-          ''on'')) }}'
+        value_template: '{{ is_presence and is_on and (not has_door or not is_door_closed
+          ) }}'
       sequence:
       - event: lighting_registry_update
         event_data:
@@ -2265,6 +2304,21 @@
           area_key: '{{ area_key }}'
           seconds: 120
           timestamp: '{{ event_ts }}'
+      - action: logbook.log
+        data:
+          name: GPE Add
+          message: 'GPE: Reset {{ area_key }} Time Added 120s'
+          entity_id: '{{ source_entity }}'
+    - alias: Safety Unlock (Self-Healing)
+      conditions:
+      - condition: template
+        value_template: '{{ should_unlock_area }}'
+      sequence:
+      - event: lighting_registry_update
+        event_data:
+          action: remove
+          area_key: '{{ area_key }}'
+        enabled: false
   - if:
     - condition: template
       value_template: '{{ should_trigger_peer }}'

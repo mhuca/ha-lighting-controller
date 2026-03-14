@@ -126,6 +126,11 @@ To onboard a new room into the **mhuca Lighting Controller**:
 
 ---
 
+### 🛠 Editor Troubleshooting: Clipboard Fail
+If Studio Code Server throws `command 'editor.action.clipboardPasteAction' not found`:
+1. **PWA Method:** Open Home Assistant via the installed Desktop App (Chrome/Edge "Install" feature).
+2. **Fallback:** Use the native **File Editor** Add-on; it bypasses the iframe clipboard API restrictions.
+3. **Check:** Ensure the URL is served over `HTTPS`, as browsers disable Clipboard APIs on `HTTP` (except for localhost).
 
 ---
 
@@ -186,6 +191,24 @@ Looking at your draft, you have implemented a crucial safety check: **`not (is_l
 3. **Command Sequence:** You are firing the `turn_off` **before** releasing the override. This is the correct order. If you released the override first, the GPE might see the occupancy and try to "Turn On" the light at the exact same millisecond the Reaper is trying to "Turn Off."
 
 ---
+## 📐 Area Deployment Blueprint
+
+To add presence-based lighting to a new area, follow these steps:
+
+### 1. The YAML "Master"
+Create a new `binary_sensor` in `template.yaml` using the logical intersection pattern:
+- **Filter:** `label_entities('person') | intersect(label_entities('[AREA_LABEL]'))`
+- **Gate:** Must check `house_is_in_night_posture`.
+- **Delay:** Set `delay_off` to 120s for a smooth transition.
+
+### 2. The UI Labels (The "Triple Threat")
+Assign these three labels to connect the sensor to the GPE Orchestrator:
+1. **Area Label:** Add `night_light` to the Area (Settings > Areas).
+2. **Sensor Label:** Add `presence` to the Master Binary Sensor.
+3. **Portal Label:** Add `entrance` to the Perimeter Door sensor.
+
+### 3. Verification
+Check the `sensor.active_sensor_monitor_master`. It should show the specific camera ID followed by the `@timestamp`.
 ---
 
 ## 🛠 Variable Registry Documentation (Node-RED to HA)

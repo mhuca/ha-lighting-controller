@@ -1,0 +1,18 @@
+sensor:
+  - name: "Front Person Master"
+    unique_id: front_person_master_001
+    state: >
+      {% set entities = label_entities('person') | intersect(label_entities('front')) %}
+
+      {% set active = entities | unique 
+        | expand 
+        | selectattr('state', 'in', ['on', 'off', 'open', 'closed']) 
+        | sort(attribute='last_changed') 
+        | map(attribute='entity_id') | list %}
+
+      {% if active | count > 0 %}
+        {% set lead = active | last %}
+        {{ lead }}@{{ states[lead].last_changed }}
+      {% else %}
+        none
+      {% endif %}
