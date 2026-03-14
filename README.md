@@ -32,7 +32,11 @@ For outdoor zones (Backyard/Front Porch), we use a "Logic Sandwich" to eliminate
 
 ## **🎭 The Logic Stack**
 
-* [**PSPG.md**](https://www.google.com/search?q=./PSPG.md): Governance, Standards, and Compliance Hit-lists.  
-* [**ARCHITECTURE.md**](https://www.google.com/search?q=./ARCHITECTURE.md): Technical breakdown of the Registry, Orchestrator, and Reaper.
+For detailed governance, architectural diagrams, and procedural guides, refer to the documents in the `/docs` directory:
+
+* [**PSPG.md**](./docs/PSPG.md): **The System Constitution.** Governance, mandatory standards, and the Compliance Hit-list. 
+* [**ARCHITECTURE.md**](./docs/ARCHITECTURE.md): **The Blueprint.** Technical deep-dive into the Three Pillars (Registry, Orchestrator, and Reaper).
+* [**Janitor Pattern**](./docs/ARCHITECTURE.md#7-the-janitor-pattern-edge-logic-v10): Guidance on edge-device expiry negotiation (ESPHome).
 
 \<\!-- machine\_intent: { "role": "root\_documentation", "framework": "lean\_instance\_v2" } \--\>
+
