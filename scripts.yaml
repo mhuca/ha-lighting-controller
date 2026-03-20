@@ -935,7 +935,7 @@ living_room_15_movie_plus:
       hours: 0
       minutes: 0
       seconds: 0
-      milliseconds: 50
+      milliseconds: 100
   - alias: Universal Controller Command Event - Living Room Off
     event: universal_controller_command
     event_data:
@@ -948,6 +948,11 @@ living_room_15_movie_plus:
       area_key: living_room
       data_payload: ''
       overrides: {}
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 100
   - alias: Universal Controller Command Event - Hallway Off
     event: universal_controller_command
     event_data:
@@ -962,6 +967,11 @@ living_room_15_movie_plus:
       area_key: hallway
       data_payload: ''
       overrides: {}
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 0
+      milliseconds: 100
   - alias: Universal Controller Command Event - Dining Room Off
     event: universal_controller_command
     event_data:
@@ -977,12 +987,88 @@ living_room_15_movie_plus:
       hours: 0
       minutes: 0
       seconds: 0
-      milliseconds: 250
-  - delay:
-      hours: 0
-      minutes: 0
-      seconds: 0
-      milliseconds: 250
+      milliseconds: 110
   alias: Living Room 15. Movie (Plus)
   description: ''
   fields: {}
+scene_snapshot:
+  alias: Scene Snapshot
+  description: '# SCENE SNAPSHOT TOOL (V2.2)
+
+
+    ### 1. CORE PURPOSE Captures current lighting states and linked area states
+
+    into the **Matrix Scratchpad**.  Allows for the creation of base scenes or
+
+    specific posture overlays (e.g., Night).
+
+
+    ### 2. OPERATING MODES * **Base Capture**: Leave `Target Posture` as
+
+    "Default". Updates the standard scene levels. * **Posture Overlay**: Enter a
+
+    slug like `night`. Only updates the overlay levels, preserving the base scene.
+
+    * **Link Capture**: Select multiple areas to define which rooms should follow
+
+    this area''s state change.
+
+
+    ### 3. OPERATIONAL NOTES * **Weight 0 (Off)**: Use this to specifically fix
+
+    missing "Off" links. Capture a scene with weight `0` and name `off`. *
+
+    **Committing**: Captured data is held in volatile memory (Scratchpad). You
+
+    **must** trigger the "Commit" node in Node-RED to save to disk.
+
+    '
+  sequence:
+  - event: capture_new_scene
+    event_data:
+      area_id: '{{ area_id }}'
+      scene_name: '{{ scene_name }}'
+      sequence_weight: '{{ sequence_weight }}'
+      linked_areas: '{{ linked_areas }}'
+      target_posture: '{{ target_posture }}'
+  - action: logbook.log
+    alias: Surgical Activity Log
+    metadata: {}
+    data:
+      entity_id: sensor.ucc_registry_log
+      message: "SNAPSHOT: Area [{{ area_id }}] updated. \nScene: \"{{ scene_name }}\"
+        (Weight: {{ sequence_weight }}). \nPosture: {{ target_posture }}.\n{% if linked_areas|length
+        > 0 %}\nLinks: {{ linked_areas | join(', ') }}\n{% endif %}\n"
+      name: Matrix Engine
+  fields:
+    area_id:
+      name: Target Area
+      required: true
+      selector:
+        area:
+      description: Select the Area you are capturing a Scene
+    scene_name:
+      selector:
+        text:
+      name: Scene Name
+      required: true
+    sequence_weight:
+      selector:
+        text:
+      name: Sequence Weight
+      required: true
+      default: '50'
+    linked_areas:
+      name: Linked Areas
+      required: false
+      selector:
+        area:
+          multiple: true
+      description: Select the Areas To Be Linked
+    target_posture:
+      selector:
+        text:
+      default: Default
+      name: Target Posture
+      description: Leave 'Default' for base scenes, or enter a posture slug (e.g.,
+        'night').

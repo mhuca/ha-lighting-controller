@@ -1130,14 +1130,14 @@
         brightness_step_up: raise
         brightness_step_down: lower
         'on': max
-        'off': turn_off
+        'off': 'off'
         toggle: next
       mapped_action: '{{ payload_map.get(trigger.payload, ''next'') }}'
   - event: universal_controller_command
     event_data:
       action_type: scene_cycle
       area_key: basement_stairs
-      command_input: '{{ mapped_action }}'
+      command_input: ''
       action_value: '{{ mapped_action }}'
   - data:
       name: UCC_SENT
@@ -2247,7 +2247,7 @@
           entity_id: '{{ source_entity }}'
       - if:
         - condition: template
-          value_template: '{{ is_door }}'
+          value_template: '{{ is_door and has_presence_capability }}'
         then:
         - event: lighting_registry_update
           event_data:
@@ -2510,3 +2510,1074 @@
           entity_id: '{{ source_entity }}'
     default:
     - stop: '{{ source_entity }} matches target state {{ target_state }}'
+- id: '1773512740863'
+  alias: Universal Matrix Scene Executor
+  description: ''
+  triggers:
+  - event_type: universal_controller_command
+    event_data:
+      action_type: scene_cycle
+    trigger: event
+  - trigger: mqtt
+    id: MQTT_Message
+    options:
+      topic: home/universal/bus
+      payload: scene_cycle
+      value_template: '{{ value_json.action_type }}'
+  actions:
+  - variables:
+      registry: "{% set reg = state_attr('sensor.global_variable_registry', 'vars')
+        %} \n{{ reg if reg is not none else {} }}\n"
+      g_logic: '{{ registry.get(''globals'', {}).get(''logic_engines'', {}) }}'
+      g_env: '{{ registry.get(''globals'', {}).get(''environmental'', {}) }}'
+      is_ready: '{{ g_env != {} and g_logic != {} }}'
+  - condition: template
+    value_template: '{{ is_ready }}'
+  - variables:
+      payload: '{{ trigger.payload_json if trigger.id == ''MQTT_Message'' else trigger.event.data
+        }}'
+      area: '{{ payload.area_key }}'
+      action: '{{ payload.action_value | default(''next'') }}'
+      matrix_sensor: '{{ state_attr(g_logic.scene_matrix, ''vars'') | default({},
+        true) }}'
+      matrix_list: '{{ matrix_sensor.get(area, {}).values() | sort(attribute=''sequence_weight'')
+        | list }}'
+      current_scene_data: '{{ state_attr(g_logic.scene_data, ''data'') | default({},
+        true) }}'
+      current_state_obj: "{{ current_scene_data.get(area, {\n  \"name\": \"off\",\n
+        \ \"sequence_weight\": 0\n}) }}"
+      current_scene_name: '{{ current_state_obj.name | default(''off'') }}'
+      current_scene: "{% set match = matrix_list \n  | selectattr('name', 'eq', current_scene_name)
+        \n  | first \n  | default(none) %}\n{{ match if match is not none else (matrix_list[1]
+        if matrix_list | length > 1 else matrix_list | first) }}\n"
+      next_scene: "{% set weight = current_scene.sequence_weight | default(0) | int
+        %}\n{% if action in ['raise', 'next'] %}\n  {{ matrix_list | selectattr('sequence_weight',
+        'gt', weight) | sort(attribute='sequence_weight') | first | default(matrix_list
+        | first) }}\n{% elif action in ['lower', 'previous'] %}\n  {{ matrix_list
+        | selectattr('sequence_weight', 'lt', weight) | sort(attribute='sequence_weight')
+        | last | default(matrix_list | last) }}\n{% elif action == 'max' %}\n  {{
+        matrix_list | last }}\n{% elif action in ['min'] %}\n  {{ matrix_list[1] if
+        matrix_list | length > 1 else matrix_list | first }}\n{% elif action in ['off']
+        %}\n  {{ matrix_list | first }}\n{% else %}\n  {{ current_scene }}\n{% endif
+        %}\n"
+  - condition: template
+    value_template: '{{ next_scene is not none }}'
+  - repeat:
+      until:
+      - condition: template
+        value_template: '{{ repeat.index >= (next_scene.primary.keys() | list | length
+          if next_scene.primary is mapping else 1) }}'
+      sequence:
+      - variables:
+          is_map: '{{ next_scene.primary is mapping }}'
+          target: "{% if is_map %}\n  {{ [ (next_scene.primary.keys() | list)[repeat.index
+            - 1] ] }}\n{% else %}\n  {{ [] }}\n{% endif %}"
+          val: "{% if is_map %}\n  {{ (next_scene.primary.values() | list)[repeat.index
+            - 1] }}\n{% else %}\n  {{ next_scene.primary | default(0) }}\n{% endif
+            %}"
+      - event: universal_controller_command
+        event_data:
+          source_device: matrix_engine
+          action_type: light_call
+          area_key: '{{ area }}'
+          target_label: '{{ target }}'
+          action_value: '{{ val | int(0) if val != '''' else '''' }}'
+          command_input: '{{ ''turn_off'' if val | int(0) == 0 and val != '''' else
+            ''turn_on'' }}'
+  - repeat:
+      until:
+      - condition: template
+        value_template: '{{ repeat.index >= (next_scene.links.keys() | list | length
+          if next_scene.links is mapping else 1) }}'
+      sequence:
+      - variables:
+          link_area: '{{ (next_scene.links.keys() | list)[repeat.index - 1] if next_scene.links
+            is mapping else none }}'
+          link_data: '{{ (next_scene.links.values() | list)[repeat.index - 1] if next_scene.links
+            is mapping else none }}'
+      - condition: template
+        value_template: '{{ link_area is not none }}'
+      - repeat:
+          until:
+          - condition: template
+            value_template: '{{ repeat.index >= (link_data.keys() | list | length
+              if link_data is mapping else 1) }}'
+          sequence:
+          - variables:
+              is_map: '{{ link_data is mapping }}'
+              target: "{% if is_map %}\n  {{ [ (link_data.keys() | list)[repeat.index
+                - 1] ] }}\n{% else %}\n  {{ [] }}\n{% endif %}"
+              val: "{% if is_map %}\n  {{ (link_data.values() | list)[repeat.index
+                - 1] }}\n{% else %}\n  {{ link_data | default(0) }}\n{% endif %}"
+          - event: universal_controller_command
+            event_data:
+              source_device: matrix_engine_link
+              action_type: light_call
+              area_key: '{{ link_area }}'
+              target_label: '{{ target }}'
+              action_value: '{{ val | int(0) if val != '''' else '''' }}'
+              command_input: '{{ ''turn_off'' if val | int(0) == 0 and val != ''''
+                else ''turn_on'' }}'
+  - action: mqtt.publish
+    data:
+      topic: home/lighting/{{ area }}/current_scene
+      retain: true
+      payload: "{\n  \"name\": \"{{ next_scene.name }}\",\n  \"sequence_weight\":
+        {{ next_scene.sequence_weight }}\n}\n"
+- id: '1773716570060'
+  alias: Universal Matrix Scene Executor V2.5
+  description: '# UNIVERSAL MATRIX SCENE EXECUTOR (V2.8.2)
+
+
+    ### 1. CORE PURPOSE
+
+    Executes lighting scene changes locally using the **Processed** profile provided
+    by the Node-RED Matrix Processor. This allows for sub-100ms scene transitions
+    by avoiding round-trips to the JS engine for navigation logic.
+
+
+
+    ### 2. NAVIGATION LOGIC (CLAMPED)
+
+    * **No Looping**: Navigation is intentionally clamped.
+
+    * **Raise/Next**: If already at the highest scene, the command is ignored (clamped
+    to max).
+
+    * **Lower/Previous**: If already at "Off" (Weight 0), the command is ignored (clamped
+    to 0).
+
+    * **Off/Max**: Absolute jumps to the start/end of the `sequence_weight` list.
+
+
+
+    ### 3. OPERATIONAL NOTES
+
+    * **V3.0 (Targeting)**: Moving toward the "Operational Hardening" checklist.
+
+    * **V2.8.2**: Fixed Markdown rendering issues for HA UI compatibility.
+
+    * **V2.8.1**: Cleaned up internal documentation and formatting.
+
+    * **V2.8**: Removed looping; implemented boundary clamping for Raise/Lower.
+
+    * **V2.7**: Hardened logic to prevent "sticky" states when starting from an "Off"
+    state.
+
+    * **V2.6**: Added support for list-based `target_label` inputs from physical controllers.
+
+
+
+    ### 4. DATA DEPENDENCIES
+
+    * **Config**: `sensor.[area_key]_matrix_config`
+
+    * **State**: `state_attr(g_logic.scene_data, ''data'')`
+
+
+    ### 5. YAML STANDARDS (PROJECT WIDE)
+
+    * **Self-Documentation**: All critical automations must include Markdown-formatted
+    documentation in the `description` block.
+
+    * **Change Log**: Maintain a versioned history within the `OPERATIONAL NOTES`
+    section.
+
+    * **No Inline Logic Comments**: Keep logic comments inside the `variables` or
+    `action` blocks, but high-level logic must be explained in Section 2 above.'
+  triggers:
+  - event_type: universal_controller_command
+    event_data:
+      action_type: scene_cycle
+    trigger: event
+  - trigger: mqtt
+    id: MQTT_Message
+    options:
+      topic: home/universal/bus
+      payload: scene_cycle
+      value_template: '{{ value_json.action_type }}'
+  actions:
+  - variables:
+      registry: "{% set reg = state_attr('sensor.global_variable_registry', 'vars')
+        %} \n{{ reg if reg is not none else {} }}\n"
+      g_logic: '{{ registry.get(''globals'', {}).get(''logic_engines'', {}) }}'
+      g_env: '{{ registry.get(''globals'', {}).get(''environmental'', {}) }}'
+      is_ready: '{{ g_env != {} and g_logic != {} }}'
+  - condition: template
+    value_template: '{{ is_ready }}'
+  - variables:
+      payload: '{{ trigger.payload_json if trigger.id == ''MQTT_Message'' else trigger.event.data
+        }}'
+      area: '{{ payload.area_key }}'
+      action: '{{ payload.action_value | default(''next'') }}'
+      matrix_sensor: '{{ state_attr(''sensor.'' ~ area ~ ''_matrix_config'', ''scenes'')
+        | default({}, true) }}'
+      matrix_list: '{{ matrix_sensor.values() | sort(attribute=''sequence_weight'')
+        | list }}'
+      current_scene_data: '{{ state_attr(g_logic.scene_data, ''data'') | default({},
+        true) }}'
+      current_state_obj: "{{ current_scene_data.get(area, {\n  \"name\": \"off\",\n
+        \ \"sequence_weight\": 0\n}) }}"
+      current_scene_name: '{{ current_state_obj.name | default(''off'') }}'
+      current_scene: "{% set match = matrix_list \n  | selectattr('name', 'eq', current_scene_name)
+        \n  | first \n  | default(none) %}\n{{ match if match is not none else (matrix_list[0]
+        if matrix_list | length > 0 else none) }}\n"
+      next_scene: "{% set weight = current_scene.sequence_weight | default(0) | int
+        %}\n{% if action in ['raise', 'next'] %}\n  {{ matrix_list | selectattr('sequence_weight',
+        'gt', weight) | sort(attribute='sequence_weight') | first | default(current_scene)
+        }}\n{% elif action in ['lower', 'previous'] %}\n  {{ matrix_list | selectattr('sequence_weight',
+        'lt', weight) | sort(attribute='sequence_weight') | last | default(current_scene)
+        }}\n{% elif action == 'max' %}\n  {{ matrix_list | last }}\n{% elif action
+        in ['min'] %}\n  {{ matrix_list | selectattr('sequence_weight', 'gt', 0) |
+        sort(attribute='sequence_weight') | first | default(matrix_list | first) }}\n{%
+        elif action in ['off'] %}\n  {{ matrix_list | first }}\n{% else %}\n  {{ current_scene
+        }}\n{% endif %}\n"
+  - condition: template
+    value_template: '{{ next_scene is not none }}'
+  - repeat:
+      until:
+      - condition: template
+        value_template: '{{ repeat.index >= (next_scene.primary.keys() | list | length
+          if next_scene.primary is mapping else 1) }}'
+      sequence:
+      - variables:
+          is_map: '{{ next_scene.primary is mapping }}'
+          target: "{% if is_map %}\n  {% set key = (next_scene.primary.keys() | list)[repeat.index
+            - 1] %}\n  {{ [key] }}\n{% else %}\n  {{ [\"all\"] }}\n{% endif %}"
+          val: "{% if is_map %}\n  {{ (next_scene.primary.values() | list)[repeat.index
+            - 1] }}\n{% else %}\n  {{ next_scene.primary | default(0) }}\n{% endif
+            %}"
+      - event: universal_controller_command
+        event_data:
+          source_device: matrix_engine
+          action_type: light_call
+          area_key: '{{ area }}'
+          target_label: '{{ target }}'
+          action_value: '{{ val | int(0) if val != '''' else '''' }}'
+          command_input: '{{ ''turn_off'' if val | int(0) == 0 and val != '''' else
+            ''turn_on'' }}'
+  - repeat:
+      until:
+      - condition: template
+        value_template: '{{ repeat.index >= (next_scene.links.keys() | list | length
+          if next_scene.links is mapping else 1) }}'
+      sequence:
+      - variables:
+          link_area: '{{ (next_scene.links.keys() | list)[repeat.index - 1] if next_scene.links
+            is mapping else none }}'
+          link_data: '{{ (next_scene.links.values() | list)[repeat.index - 1] if next_scene.links
+            is mapping else none }}'
+      - condition: template
+        value_template: '{{ link_area is not none }}'
+      - repeat:
+          until:
+          - condition: template
+            value_template: '{{ repeat.index >= (link_data.keys() | list | length
+              if link_data is mapping else 1) }}'
+          sequence:
+          - variables:
+              is_map: '{{ link_data is mapping }}'
+              target: "{% if is_map %}\n  {% set key = (link_data.keys() | list)[repeat.index
+                - 1] %}\n  {{ [key] }}\n{% else %}\n  {{ [\"all\"] }}\n{% endif %}"
+              val: "{% if is_map %}\n  {{ (link_data.values() | list)[repeat.index
+                - 1] }}\n{% else %}\n  {{ link_data | default(0) }}\n{% endif %}"
+          - event: universal_controller_command
+            event_data:
+              source_device: matrix_engine_link
+              action_type: light_call
+              area_key: '{{ link_area }}'
+              target_label: '{{ target }}'
+              action_value: '{{ val | int(0) if val != '''' else '''' }}'
+              command_input: '{{ ''turn_off'' if val | int(0) == 0 and val != ''''
+                else ''turn_on'' }}'
+  - action: mqtt.publish
+    data:
+      topic: home/lighting/{{ area }}/current_scene
+      retain: true
+      payload: "{\n  \"name\": \"{{ next_scene.name }}\",\n  \"sequence_weight\":
+        {{ next_scene.sequence_weight }}\n}\n"
+  mode: restart
+- id: '1773767276738'
+  alias: Universal Matrix Scene Executor V2.8.4
+  description: "# UNIVERSAL MATRIX SCENE EXECUTOR (V2.8.4)\n\n## 1. CORE PURPOSE\nExecutes
+    lighting scene changes locally using the **Processed** profile provided by the
+    Node-RED Matrix Processor. This version is \"Bus Pure,\"  meaning it exclusively
+    listens to the Universal Bus for all commands. This allows for sub-100ms scene
+    transitions by avoiding round-trips  to the JS engine for navigation logic.\n\n##
+    2. NAVIGATION LOGIC (UNIFIED)\n* **Bus Integration**: Listens to `home/universal/bus`
+    for unified observability.\n* **No Looping**: Navigation is intentionally clamped.\n*
+    **Relative**: Supports `next`, `previous`, `raise`, `lower`, `max`, `min`.\n*
+    **Absolute**: Automatically switches to an absolute jump if the `action_value`
+    \n  is a numeric weight (e.g., from the HA UI Selector).\n\n* **Boundary Clamping**:
+    If navigation hits the end of the `sequence_weight` list, \n  the command is ignored
+    (clamped).\n\n\n## 3. OPERATIONAL NOTES\n* **V2.8.4**: Replaced `home/matrix/+/set`
+    with unified `home/universal/bus` \n  triggering for better system observability.\n\n*
+    **V2.8.3**: Integrated MQTT UI Bridge logic and added Absolute Weight Jump.\n*
+    **V2.8.2**: Fixed Markdown rendering issues for HA UI compatibility.\n* **V2.8.1**:
+    Cleaned up internal documentation and formatting.\n* **V2.8**: Removed looping;
+    implemented boundary clamping for Raise/Lower.\n* **V2.7**: Hardened logic to
+    prevent \"sticky\" states when starting from an \"Off\" state.\n* **V2.6**: Added
+    support for list-based `target_label` inputs from physical controllers.\n\n##
+    4. DATA DEPENDENCIES\n* **Config**: `sensor.[area_key]_matrix_config`\n* **State**:
+    `state_attr(g_logic.scene_data, 'data')` (from `sensor.mqtt_scene_tracker_global`)\n\n##
+    5. YAML STANDARDS (PROJECT WIDE)\n* **Self-Documentation**: All critical automations
+    must include \n  Markdown-formatted documentation in the `description` block.\n\n*
+    **Change Log**: Maintain a versioned history within the `OPERATIONAL NOTES` section.\n*
+    **No Inline Logic Comments**: Keep logic comments inside the `variables` \n  or
+    `action` blocks; high-level logic resides in Section 2."
+  triggers:
+  - trigger: event
+    event_type: universal_controller_command
+    event_data:
+      action_type: scene_cycle
+  - trigger: mqtt
+    id: MQTT_Message
+    topic: home/universal/bus
+  actions:
+  - variables:
+      registry: "{% set reg = state_attr('sensor.global_variable_registry', 'vars')
+        %} \n{{ reg if reg is not none else {} }}\n"
+      g_logic: '{{ registry.get(''globals'', {}).get(''logic_engines'', {}) }}'
+      g_env: '{{ registry.get(''globals'', {}).get(''environmental'', {}) }}'
+      is_ready: '{{ g_env != {} and g_logic != {} }}'
+  - condition: template
+    value_template: '{{ is_ready }}'
+  - variables:
+      payload: '{{ trigger.payload_json if trigger.id == ''MQTT_Message'' else trigger.event.data
+        }}'
+      area: '{{ payload.area_key }}'
+      action: '{{ payload.action_value | default(''next'') }}'
+      target_weight: '{{ action | int(-1) }}'
+      is_jump: '{{ target_weight >= 0 }}'
+      matrix_sensor: '{{ state_attr(''sensor.'' ~ area ~ ''_matrix_config'', ''scenes'')
+        | default({}, true) }}'
+      matrix_list: '{{ matrix_sensor.values() | sort(attribute=''sequence_weight'')
+        | list }}'
+      current_scene_data: '{{ state_attr(g_logic.scene_data, ''data'') | default({},
+        true) }}'
+      current_state_obj: "{{ current_scene_data.get(area, {\n  \"name\": \"off\",\n
+        \ \"sequence_weight\": 0\n}) }}"
+      current_scene_name: '{{ current_state_obj.name | default(''off'') }}'
+      current_scene: "{% set match = matrix_list \n  | selectattr('name', 'eq', current_scene_name)
+        \n  | first \n  | default(none) %}\n{{ match if match is not none else (matrix_list[0]
+        if matrix_list | length > 0 else none) }}\n"
+      next_scene: "{% set weight = current_scene.sequence_weight | default(0) | int
+        %}\n{% if is_jump %}\n  {{ matrix_list | selectattr('sequence_weight', 'eq',
+        target_weight) | first | default(current_scene) }}\n{% elif action in ['raise',
+        'next'] %}\n  {{ matrix_list | selectattr('sequence_weight', 'gt', weight)
+        | sort(attribute='sequence_weight') | first | default(current_scene) }}\n{%
+        elif action in ['lower', 'previous'] %}\n  {{ matrix_list | selectattr('sequence_weight',
+        'lt', weight) | sort(attribute='sequence_weight') | last | default(current_scene)
+        }}\n{% elif action == 'max' %}\n  {{ matrix_list | last }}\n{% elif action
+        in ['min'] %}\n  {{ matrix_list | selectattr('sequence_weight', 'gt', 0) |
+        sort(attribute='sequence_weight') | first | default(matrix_list | first) }}\n{%
+        elif action in ['off'] %}\n  {{ matrix_list | first }}\n{% else %}\n  {{ current_scene
+        }}\n{% endif %}\n"
+  - condition: template
+    value_template: '{{ next_scene is not none }}'
+  - repeat:
+      until:
+      - condition: template
+        value_template: '{{ repeat.index >= (next_scene.primary.keys() | list | length
+          if next_scene.primary is mapping else 1) }}'
+      sequence:
+      - variables:
+          is_map: '{{ next_scene.primary is mapping }}'
+          target: "{% if is_map %}\n  {% set key = (next_scene.primary.keys() | list)[repeat.index
+            - 1] %}\n  {{ [key] }}\n{% else %}\n  {{ [\"all\"] }}\n{% endif %}"
+          val: "{% if is_map %}\n  {{ (next_scene.primary.values() | list)[repeat.index
+            - 1] }}\n{% else %}\n  {{ next_scene.primary | default(0) }}\n{% endif
+            %}"
+      - event: universal_controller_command
+        event_data:
+          source_device: matrix_engine
+          action_type: light_call
+          area_key: '{{ area }}'
+          target_label: '{{ target }}'
+          action_value: '{{ val | int(0) if val != '''' else '''' }}'
+          command_input: '{{ ''turn_off'' if val | int(0) == 0 and val != '''' else
+            ''turn_on'' }}'
+  - repeat:
+      until:
+      - condition: template
+        value_template: '{{ repeat.index >= (next_scene.links.keys() | list | length
+          if next_scene.links is mapping else 1) }}'
+      sequence:
+      - variables:
+          link_area: '{{ (next_scene.links.keys() | list)[repeat.index - 1] if next_scene.links
+            is mapping else none }}'
+          link_data: '{{ (next_scene.links.values() | list)[repeat.index - 1] if next_scene.links
+            is mapping else none }}'
+      - condition: template
+        value_template: '{{ link_area is not none }}'
+      - repeat:
+          until:
+          - condition: template
+            value_template: '{{ repeat.index >= (link_data.keys() | list | length
+              if link_data is mapping else 1) }}
+
+              '
+          sequence:
+          - variables:
+              is_map: '{{ link_data is mapping }}'
+              target: "{% if is_map %}\n  {% set key = (link_data.keys() | list)[repeat.index
+                - 1] %}\n  {{ [key] }}\n{% else %}\n  {{ [\"all\"] }}\n{% endif %}"
+              val: "{% if is_map %}\n  {{ (link_data.values() | list)[repeat.index
+                - 1] }}\n{% else %}\n  {{ link_data | default(0) }}\n{% endif %}"
+          - event: universal_controller_command
+            event_data:
+              source_device: matrix_engine_link
+              action_type: light_call
+              area_key: '{{ link_area }}'
+              target_label: '{{ target }}'
+              action_value: '{{ val | int(0) if val != '''' else '''' }}'
+              command_input: '{{ ''turn_off'' if val | int(0) == 0 and val != ''''
+                else ''turn_on'' }}'
+  - action: mqtt.publish
+    data:
+      topic: home/lighting/{{ area }}/current_scene
+      retain: true
+      payload: "{\n  \"name\": \"{{ next_scene.name }}\",\n  \"sequence_weight\":
+        {{ next_scene.sequence_weight }}\n}\n"
+  mode: restart
+- id: '1773771624950'
+  alias: Universal Matrix Scene Executor V2.9.0
+  description: '# UNIVERSAL MATRIX SCENE EXECUTOR (V2.9.2)
+
+
+    ## 1. CORE PURPOSE
+
+
+    Executes lighting scene changes locally using the **Processed** profile provided
+    by the Node-RED Matrix Processor. This version is "Bus Pure," meaning it exclusively
+    listens to the Universal Bus for all commands.
+
+
+    ## 2. ARCHITECTURAL LOGIC
+
+
+    * **Bus Integration**: Listens to `home/universal/bus` for unified observability.
+
+
+    * **Relative Commands**: Supports `next`, `previous`, `raise`, `lower`, `max`,
+    `min`.
+
+
+    * **Absolute Jumps**: Automatically switches to an absolute jump if `action_value`
+    is a numeric weight (e.g., from the HA UI Selector).
+
+
+    * **Restore Logic**: If `action_value` is `restore`, the engine pulls the weight
+    from `sensor.[area]_matrix_previous_scene` to return the room to its last state.
+
+
+    * **Lock Down Logic**: If `action_value` is `lock_down`, the engine physically
+    forces all labels to 0 (Off) but suppresses the `mqtt.publish` to preserve logical
+    state memory during "Away" postures.
+
+
+    ## 3. OPERATIONAL NOTES
+
+
+    * **V2.9.2**: Applied V3.0 Documentation Standards; refined spacing and bold key
+    formatting.
+
+
+    * **V2.9.1**: Integrated `lock_down` physical override with `restore` state logic.
+
+
+    * **V2.9.0**: Added `restore` logic to leverage the V3.1 Discovery Generator memory.
+
+
+    * **V2.8.4**: Replaced `home/matrix/+/set` with unified `home/universal/bus`.
+
+
+    * **V2.8.0**: Removed looping; implemented boundary clamping for Raise/Lower.
+
+
+    ## 4. DATA DEPENDENCIES
+
+
+    * **Config**: `sensor.[area_key]_matrix_config`
+
+
+    * **Memory**: `sensor.[area_key]_matrix_previous_scene`
+
+
+    * **State**: `state_attr(g_logic.scene_data, ''data'')`
+
+
+    ## 5. YAML STANDARDS (PROJECT WIDE)
+
+
+    * **Self-Documentation**: All critical automations must include Markdown-formatted
+    documentation in the `description` block.
+
+
+    * **Code References**: Use backticks ` for entity IDs, attributes, or technical
+    slugs (e.g., `area_id`, `weight_0`).'
+  triggers:
+  - trigger: event
+    event_type: universal_controller_command
+    event_data:
+      action_type: scene_cycle
+  - trigger: mqtt
+    id: MQTT_Message
+    topic: home/universal/bus
+  actions:
+  - variables:
+      registry: "{% set reg = state_attr('sensor.global_variable_registry', 'vars')
+        %} \n{{ reg if reg is not none else {} }}\n"
+      g_logic: '{{ registry.get(''globals'', {}).get(''logic_engines'', {}) }}'
+      is_ready: '{{ g_logic != {} }}'
+  - condition: template
+    value_template: '{{ is_ready }}'
+  - variables:
+      payload: '{{ trigger.payload_json if trigger.id == ''MQTT_Message'' else trigger.event.data
+        }}'
+      area: '{{ payload.area_key }}'
+      action: '{{ payload.action_value | default(''next'') }}'
+      restore_val: "{% if action == 'restore' %}\n  {% set prev = states('sensor.'
+        ~ area ~ '_matrix_previous_scene') %}\n  {{ prev.split(':')[0] | int(-1) if
+        prev not in ['unknown', 'unavailable'] else -1 }}\n{% else %}\n  -1\n{% endif
+        %}"
+      target_weight: '{{ restore_val if action == ''restore'' else action | int(-1)
+        }}'
+      is_jump: '{{ target_weight >= 0 }}'
+      is_lock_down: '{{ action == ''lock_down'' }}'
+      matrix_sensor: '{{ state_attr(''sensor.'' ~ area ~ ''_matrix_config'', ''scenes'')
+        | default({}, true) }}'
+      matrix_list: '{{ matrix_sensor.values() | sort(attribute=''sequence_weight'')
+        | list }}'
+      current_scene_data: '{{ state_attr(g_logic.scene_data, ''data'') | default({},
+        true) }}'
+      current_state_obj: "{{ current_scene_data.get(area, {\n  \"name\": \"off\",\n
+        \ \"sequence_weight\": 0\n}) }}"
+      current_scene_name: '{{ current_state_obj.name | default(''off'') }}'
+      current_scene: "{% set match = matrix_list \n  | selectattr('name', 'eq', current_scene_name)
+        \n  | first \n  | default(none) %}\n{{ match if match is not none else (matrix_list[0]
+        if matrix_list | length > 0 else none) }}\n"
+      next_scene: "{% set weight = current_scene.sequence_weight | default(0) | int
+        %}\n{% if is_jump %}\n  {{ matrix_list | selectattr('sequence_weight', 'eq',
+        target_weight) | first | default(current_scene) }}\n{% elif action in ['raise',
+        'next'] %}\n  {{ matrix_list | selectattr('sequence_weight', 'gt', weight)
+        | sort(attribute='sequence_weight') | first | default(current_scene) }}\n{%
+        elif action in ['lower', 'previous'] %}\n  {{ matrix_list | selectattr('sequence_weight',
+        'lt', weight) | sort(attribute='sequence_weight') | last | default(current_scene)
+        }}\n{% elif action == 'max' %}\n  {{ matrix_list | last }}\n{% elif action
+        in ['min'] %}\n  {{ matrix_list | selectattr('sequence_weight', 'gt', 0) |
+        sort(attribute='sequence_weight') | first | default(matrix_list | first) }}\n{%
+        elif action in ['off','lock_down'] %}\n  {{ matrix_list | first }}\n{% else
+        %}\n  {{ current_scene }}\n{% endif %}\n"
+  - condition: template
+    value_template: '{{ next_scene is not none }}'
+  - repeat:
+      until:
+      - condition: template
+        value_template: '{{ repeat.index >= (next_scene.primary.keys() | list | length
+          if next_scene.primary is mapping else 1) }}'
+      sequence:
+      - variables:
+          is_map: '{{ next_scene.primary is mapping }}'
+          target: "{% if is_map %}\n  {% set key = (next_scene.primary.keys() | list)[repeat.index
+            - 1] %}\n  {{ [key] }}\n{% else %}\n  {{ [\"all\"] }}\n{% endif %}"
+          val: "{% if is_map %}\n  {{ (next_scene.primary.values() | list)[repeat.index
+            - 1] }}\n{% else %}\n  {{ next_scene.primary | default(0) }}\n{% endif
+            %}"
+      - event: universal_controller_command
+        event_data:
+          source_device: matrix_engine
+          action_type: light_call
+          area_key: '{{ area }}'
+          target_label: '{{ target }}'
+          action_value: '{{ val | int(0) if val != '''' else '''' }}'
+          command_input: '{{ ''turn_off'' if val | int(0) == 0 and val != '''' else
+            ''turn_on'' }}'
+  - repeat:
+      until:
+      - condition: template
+        value_template: '{{ repeat.index >= (next_scene.links.keys() | list | length
+          if next_scene.links is mapping else 1) }}'
+      sequence:
+      - variables:
+          link_area: '{{ (next_scene.links.keys() | list)[repeat.index - 1] if next_scene.links
+            is mapping else none }}'
+          link_data: '{{ (next_scene.links.values() | list)[repeat.index - 1] if next_scene.links
+            is mapping else none }}'
+      - condition: template
+        value_template: '{{ link_area is not none }}'
+      - repeat:
+          until:
+          - condition: template
+            value_template: '{{ repeat.index >= (link_data.keys() | list | length
+              if link_data is mapping else 1) }}
+
+              '
+          sequence:
+          - variables:
+              is_map: '{{ link_data is mapping }}'
+              target: "{% if is_map %}\n  {% set key = (link_data.keys() | list)[repeat.index
+                - 1] %}\n  {{ [key] }}\n{% else %}\n  {{ [\"all\"] }}\n{% endif %}"
+              val: "{% if is_map %}\n  {{ (link_data.values() | list)[repeat.index
+                - 1] }}\n{% else %}\n  {{ link_data | default(0) }}\n{% endif %}"
+          - event: universal_controller_command
+            event_data:
+              source_device: matrix_engine_link
+              action_type: light_call
+              area_key: '{{ link_area }}'
+              target_label: '{{ target }}'
+              action_value: '{{ val | int(0) if val != '''' else '''' }}'
+              command_input: '{{ ''turn_off'' if val | int(0) == 0 and val != ''''
+                else ''turn_on'' }}'
+  - if:
+    - condition: template
+      value_template: '{{ not is_lock_down }}'
+    then:
+    - action: mqtt.publish
+      data:
+        topic: home/lighting/{{ area }}/current_scene
+        retain: true
+        payload: "{\n  \"name\": \"{{ next_scene.name }}\",\n  \"sequence_weight\":
+          {{ next_scene.sequence_weight }}\n}\n"
+  mode: restart
+- id: '1773782933954'
+  alias: Global Presence Engine - Orchestrator
+  description: "# GPE ORCHESTRATOR (V3.2)\n\n## 1. CORE PURPOSE\n\nDetermines area
+    occupancy and manages lighting/security transitions.  Uses Bayesian-lite logic
+    (Door Age + HVAC) to prevent \"Ghosting.\"\n\n## 2. V3.2 SECURITY EVOLUTION\n\n*
+    **Posture Awareness**: Integrated with `global_posture_sensor`.\n\n* **Security
+    Divergence**: If Posture is `away`, motion triggers security \n  logic instead
+    of simple lighting calls.\n\n\n* **Perimeter Priming**: Uses `security_status`
+    in the Global Registry \n  to verify intruders. Internal rooms (like Powder Room)
+    only trigger \n  the alarm if a perimeter area was breached first.\n\n\n## 3.
+    DATA DEPENDENCIES\n\n* **Registry**: `sensor.global_variable_registry`\n\n* **Alarm**:
+    `alarm_control_panel.house_alarm`"
+  triggers:
+  - trigger: state
+    entity_id: sensor.active_sensor_monitor_master
+  conditions:
+  - condition: template
+    value_template: "{{ trigger.to_state.state not in ['none', 'unknown', 'unavailable']
+      and\n   trigger.from_state.state != trigger.to_state.state }}"
+  - condition: template
+    value_template: "{% set source_entity = trigger.to_state.state %} \n{% set area
+      = area_id(source_entity) %} \n{% set overrides = state_attr('sensor.active_area_overrides',
+      'overridden_areas') or [] %} \n{{ area not in overrides }}\n"
+  actions:
+  - variables:
+      registry: '{% set r = state_attr(''sensor.global_variable_registry'', ''vars'')
+        %} {{ r if r is not none else {} }}'
+      g_env: '{{ registry.get(''globals'', {}).get(''environmental'', {}) }}'
+      g_hvac: '{{ registry.get(''globals'', {}).get(''hvac'', {}) }}'
+      g_logic: '{{ registry.get(''globals'', {}).get(''logic_engines'', {}) }}'
+      is_ready: '{{ g_env != {} }}'
+  - condition: template
+    value_template: '{{ is_ready }}'
+  - variables:
+      source_entity: '{{ trigger.to_state.state.split(''@'')[0] }}'
+      area_key: '{{ area_id(source_entity) | default(''none'') }}'
+      entity_labels: '{{ labels(source_entity) }}'
+      event_ts: '{{ states[source_entity].last_changed }}'
+      is_on: '{{ is_state(source_entity, ''on'') }}'
+      has_presence_capability: '{{ (area_entities(area_key) | intersect(label_entities(''presence''))
+        | count) > 0 }}'
+      is_presence: '{{ ''presence'' in entity_labels }}'
+      area_policy: '{{ labels(area_key) }}'
+      is_night_policy_enabled: '{{ ''night_light'' in area_policy }}'
+      house_is_in_night_posture: '{{ is_state(g_env.night_posture_sensor, ''on'')
+        }}'
+      use_night_settings: '{{ is_night_policy_enabled and house_is_in_night_posture
+        }}'
+      final_action_value: '{{ ''night_mode'' if use_night_settings else ''day_mode''
+        }}'
+      final_target_label: "{% if use_night_settings %} \n  {{ ['night_light'] }} \n{%
+        elif is_night_policy_enabled %}\n  {{ ['main'] }} \n{% else %} \n  {{ [] }}
+        \n{% endif %}\n"
+      adjoining_area: '{{ registry.area_metadata.get(area_key, {}).get(''neighbors'',
+        {}).get(''peer'', ''none'') }}'
+      is_entrance: '{{ ''entrance'' in entity_labels }}'
+      is_door: '{{ ''door'' in entity_labels }}'
+      door_entity: '{{ (area_entities(area_key) | intersect(label_entities(''door'')))
+        | first | default(''none'') }}'
+      has_door: '{{ door_entity != ''none'' }}'
+      is_lock_zone: '{{ ''lock_eligible'' in area_policy }}'
+      registry_entry: '{{ (state_attr(g_logic.lighting_off_registry, ''active_timers'')
+        or {}).get(area_key, {}) }}'
+      is_area_locked: '{{ registry_entry.get(''locked'', false) }}'
+      should_trigger_peer: '{{ is_door and is_on and area_key != ''none'' and adjoining_area
+        != ''none'' }}'
+      hvac_action: '{{ state_attr(g_hvac.primary_unit, ''hvac_action'') | default(''idle'')
+        }}'
+      fan_running: '{{ is_state_attr(g_hvac.primary_unit, ''fan'', ''on'') }}'
+      hvac_is_active: '{{ hvac_action in g_hvac.monitored_states or fan_running }}'
+      door_age: "{% if has_door and states[door_entity] is not none %}\n  {{ as_timestamp(now())
+        - as_timestamp(states[door_entity].last_changed, 0) }}\n{% else %}\n  0\n{%
+        endif %}\n"
+      is_door_closed: '{{ is_state(door_entity, ''off'') if has_door else false }}'
+      is_privacy_zone: '{{ has_door and ''lock_eligible'' in area_policy }}'
+      is_ghost: "{% if not has_door %} \n  {{ false }}\n{% else %}\n  {{ is_presence
+        and is_on and is_door_closed and not is_area_locked and (door_age > 600 or
+        hvac_is_active) }}\n{% endif %}\n"
+      should_lock_area: "{% if not is_privacy_zone %}\n  {{ false }}\n{% else %}\n
+        \ {{ is_presence and is_on and is_door_closed and not is_area_locked and door_age
+        < 120 }}\n{% endif %}\n"
+      should_unlock_area: "{% if is_area_locked %}\n   {# Safety: Clear lock if motion
+        stops OR if the door is physically opened #}\n   {{ not is_on or (has_door
+        and not is_door_closed) }}\n{% else %}\n   {{ false }}\n{% endif %}\n"
+  - choose:
+    - alias: Veto Log (Ghost Detected)
+      conditions:
+      - condition: template
+        value_template: '{{ is_presence and is_on and is_ghost }}'
+      sequence:
+      - action: logbook.log
+        data:
+          name: GPE VETO
+          message: 'GPE VETO: Ghost in {{ area_key }} (HVAC: {{ hvac_action }}, Door
+            Age: {{ door_age | int }}s, Lock Status: {{ is_area_locked}})'
+          entity_id: '{{ source_entity }}'
+    - alias: Lock Presence (Sabbatical)
+      conditions:
+      - condition: template
+        value_template: '{{ should_lock_area and not is_area_locked }}'
+      sequence:
+      - event: lighting_registry_update
+        event_data:
+          action: lock
+          area_key: '{{ area_key }}'
+      - action: logbook.log
+        data:
+          name: GPE LOCKED
+          message: 'Locked Via {{ ''Motion'' if is_presence else ''Portal'' }} Room
+            {{ area_key }} (Registry Reset{% if has_door %}, Door Age: {{ door_age
+            | int }}s{% endif %})'
+          entity_id: '{{ source_entity }}'
+    - alias: Valid Turn On (Anti-Ghosting)
+      conditions:
+      - condition: template
+        value_template: '{{ (is_entrance or is_door or (is_presence and not is_area_locked))
+          and is_on and not is_ghost }}'
+      sequence:
+      - event: universal_controller_command
+        event_data:
+          action_type: light_call
+          command_input: turn_on
+          area_key: '{{ area_key }}'
+          action_value: '{{ final_action_value }}'
+          target_label: '{{ final_target_label }}'
+          source_device: monitor
+      - event: lighting_registry_update
+        event_data:
+          action: remove
+          area_key: '{{ area_key }}'
+      - action: logbook.log
+        data:
+          name: GPE
+          message: 'Turn On: Via {{''Motion'' if is_presence else ''Portal'' }} Room
+            {{ area_key }} (Registry Reset, Door Age: {{ door_age | int }}s)'
+          entity_id: '{{ source_entity }}'
+      - if:
+        - condition: template
+          value_template: '{{ is_door and has_presence_capability }}'
+        then:
+        - event: lighting_registry_update
+          event_data:
+            action: add
+            area_key: '{{ area_key }}'
+            seconds: 10
+            timestamp: '{{ event_ts }}'
+    - alias: Presence Cleared (Start Cleaner)
+      conditions:
+      - condition: template
+        value_template: '{{ is_presence and not is_on and not is_area_locked }}'
+      sequence:
+      - event: lighting_registry_update
+        event_data:
+          action: add
+          area_key: '{{ area_key }}'
+          seconds: '{{ 120 if has_presence_capability else 1800 }}'
+          skip_warning: '{{ not is_lock_zone }}'
+          timestamp: '{{ event_ts }}'
+      - event: start_registry_cleaner
+      - action: logbook.log
+        data:
+          name: 'GPE Start '
+          message: 'GPE: Start Cleaner {{ area_key }} Seconds: "{{ 120 if has_presence_capability
+            else 1800 }}" Skip Warning: "{{ not is_lock_zone }}"'
+          entity_id: '{{ source_entity }}'
+    - alias: Door Closed Timer Reset
+      conditions:
+      - condition: template
+        value_template: '{{ is_door and not is_on }}'
+      sequence:
+      - event: lighting_registry_update
+        event_data:
+          action: add
+          area_key: '{{ area_key }}'
+          seconds: '{{ 30 if has_presence_capability else 5 }}'
+          skip_warning: '{{ not is_lock_zone }}'
+          timestamp: '{{ event_ts }}'
+      - action: logbook.log
+        data:
+          name: GPE Add
+          message: 'GPE: Door Warning {{ area_key }} seconds: "{{ 30 if has_presence_capability
+            else 5 }}" skip_warning: "{{ not is_lock_zone }}"'
+          entity_id: '{{ source_entity }}'
+    - alias: Presence Update (Door Open)
+      conditions:
+      - condition: template
+        value_template: '{{ is_presence and is_on and (not has_door or not is_door_closed
+          ) }}'
+      sequence:
+      - event: lighting_registry_update
+        event_data:
+          action: add
+          area_key: '{{ area_key }}'
+          seconds: 120
+          timestamp: '{{ event_ts }}'
+      - action: logbook.log
+        data:
+          name: GPE Add
+          message: 'GPE: Reset {{ area_key }} Time Added 120s'
+          entity_id: '{{ source_entity }}'
+    - alias: Safety Unlock (Self-Healing)
+      conditions:
+      - condition: template
+        value_template: '{{ should_unlock_area }}'
+      sequence:
+      - event: lighting_registry_update
+        event_data:
+          action: remove
+          area_key: '{{ area_key }}'
+        enabled: false
+  - if:
+    - condition: template
+      value_template: '{{ should_trigger_peer }}'
+    then:
+    - event: universal_controller_command
+      event_data:
+        action_type: light_call
+        command_input: turn_on
+        area_key: '{{ adjoining_area }}'
+        action_value: '{{ final_action_value }}'
+        source_device: peer_preheat
+  mode: parallel
+  max: 20
+- id: '1773782981035'
+  alias: Global Presence Engine - Recursive Registry Cleaner
+  description: Iterates through the Registry with support for Skip-Warning (Transient)
+    logic
+  triggers:
+  - trigger: event
+    event_type: start_registry_cleaner
+  - trigger: event
+    event_type: esphome.start_registry_cleaner
+  - trigger: event
+    event_type: cleaner_heartbeat
+  - trigger: state
+    entity_id: sensor.lighting_off_registry
+    to: active
+  conditions: []
+  actions:
+  - variables:
+      global_vars: '{{ state_attr(''sensor.global_variable_registry'', ''vars'') }}'
+      g_logic: '{{ global_vars.globals.logic_engines }}'
+      target_registry: '{{ g_logic.lighting_off_registry }}'
+      log_dest: '{{ g_logic.system_log }}'
+      registry_data: '{{ state_attr(target_registry, ''active_timers'') or {} }}'
+      current_time: '{{ now() }}'
+  - repeat:
+      for_each: '{{ registry_data.items() | list }}'
+      sequence:
+      - variables:
+          area_key: '{{ repeat.item[0] }}'
+          data: '{{ repeat.item[1] }}'
+          expiry: '{{ as_timestamp(data.expiry) | default(0) }}'
+          is_locked: '{{ data.locked }}'
+          is_warned: '{{ data.warned }}'
+          skip_warning: '{{ data.skip_warning | default(false) }}'
+          now_ts: '{{ as_timestamp(now()) }}'
+          is_expired: '{{ now_ts >= expiry }}'
+      - choose:
+        - conditions:
+          - condition: template
+            value_template: '{{ is_locked or not is_expired }}'
+          sequence: []
+        - conditions:
+          - condition: template
+            value_template: '{{ skip_warning }}'
+          sequence:
+          - event: universal_controller_command
+            event_data:
+              action_type: light_call
+              command_input: turn_off
+              area_key: '{{ area_key }}'
+              source_device: Global Presence Cleaner
+          - event: lighting_registry_update
+            event_data:
+              action: remove
+              area_key: '{{ area_key }}'
+          - action: logbook.log
+            data:
+              name: Registry Cleaner
+              message: Light Call Turn Off (Transient/Skip) for {{ area_key }}
+              entity_id: '{{ log_dest }}'
+        - conditions:
+          - condition: template
+            value_template: '{{ not is_warned }}'
+          sequence:
+          - event: universal_controller_command
+            event_data:
+              action_type: light_call
+              command_input: turn_on
+              action_value: min
+              area_key: '{{ area_key }}'
+              source_device: Global Presence Cleaner
+          - event: lighting_registry_update
+            event_data:
+              action: warned
+              area_key: '{{ area_key }}'
+          - action: logbook.log
+            data:
+              name: Registry Cleaner
+              message: Light Call Dim Warning for {{ area_key }}
+              entity_id: '{{ log_dest }}'
+        - conditions:
+          - condition: template
+            value_template: '{{ is_warned }}'
+          sequence:
+          - event: universal_controller_command
+            event_data:
+              action_type: light_call
+              command_input: turn_off
+              area_key: '{{ area_key }}'
+              source_device: Global Presence Cleaner
+          - event: lighting_registry_update
+            event_data:
+              action: remove
+              area_key: '{{ area_key }}'
+          - action: logbook.log
+            data:
+              name: Registry Cleaner
+              message: Light Call Turn Off After Warning for {{ area_key }}
+              entity_id: '{{ log_dest }}'
+  - if:
+    - condition: template
+      value_template: '{{ (state_attr(target_registry, ''active_timers'') or {}) |
+        count > 0 }}'
+    then:
+    - delay: 00:00:05
+    - event: cleaner_heartbeat
+  mode: restart
+- id: '1773800605141'
+  alias: Global Presence Engine - Posture Manager V1.2
+  description: '# GPE POSTURE MANAGER (V1.2)
+
+
+    ## 1. CORE PURPOSE
+
+
+    Manages global house states (Home, Away, Night) and orchestrates the transitions
+    between them. Acts as the bridge between raw sensor data and the Alarm Panel.
+
+
+    ## 2. LOGIC FLOWS
+
+
+    * **Arrival**: Perimeter sensor + House is Away -> Start Entry Delay.
+
+
+    * **Departure**: Posture set to Away -> Snapshot current scenes -> Trigger Area
+    `lock_down`.
+
+
+    * **Night**: Syncs Night Posture with GPE lighting profiles.
+
+
+    ## 3. DATA DEPENDENCIES
+
+
+    * **Registry**: `sensor.global_variable_registry`
+
+
+    * **Alarm**: `alarm_control_panel.house_alarm`
+
+
+    ## 4. INTEGRATION NOTES
+
+
+    * **V1.2**: Standardized documentation to V3.0 standards; verified `lock_down`
+    action value for physical-only clear.
+
+
+    * **V1.1**: Replaced blanket commands with registry-driven loops.'
+  triggers:
+  - trigger: state
+    entity_id: sensor.active_sensor_monitor_master
+    id: monitor_event
+  - trigger: state
+    entity_id: alarm_control_panel.house_alarm
+    id: alarm_state_change
+  actions:
+  - variables:
+      registry: "{% set r = state_attr('sensor.global_variable_registry', 'vars')
+        %} \n{{ r if r is not none else {} }}\n"
+      g_env: '{{ registry.get(''globals'', {}).get(''environmental'', {}) }}'
+      posture_entity: '{{ g_env.global_posture_sensor }}'
+      current_posture: '{{ states(posture_entity) }}'
+      source_entity: '{{ trigger.to_state.state.split(''@'')[0] if trigger.id == ''monitor_event''
+        else ''none'' }}'
+      area_key: '{{ area_id(source_entity) | default(''none'') }}'
+      entity_labels: '{{ labels(source_entity) }}'
+      is_perimeter: '{{ ''perimeter'' in labels(area_key) or ''entrance'' in entity_labels
+        }}'
+  - choose:
+    - alias: 'Arrival: Perimeter Breach while Away'
+      conditions:
+      - condition: template
+        value_template: '{{ trigger.id == ''monitor_event'' and current_posture ==
+          ''away'' and is_perimeter }}'
+      sequence:
+      - action: logbook.log
+        data:
+          name: GPE POSTURE
+          message: Perimeter breach in {{ area_key }}. Starting entry sequence.
+    - alias: 'Departure: Posture set to Away'
+      conditions:
+      - condition: template
+        value_template: "{{ trigger.id == 'alarm_state_change' and \n   trigger.to_state.state
+          == 'armed_away' }}"
+      sequence:
+      - action: logbook.log
+        data:
+          name: GPE POSTURE
+          message: House Armed Away. Snapshotting states and executing area lock_down.
+      - event: universal_controller_command
+        event_data:
+          action_type: snapshot_all_areas
+          source_device: posture_manager
+      - repeat:
+          for_each: '{{ registry.area_metadata.keys() | list }}'
+          sequence:
+          - event: universal_controller_command
+            event_data:
+              action_type: scene_cycle
+              action_value: lock_down
+              area_key: '{{ repeat.item }}'
+              source_device: posture_manager
+    - alias: 'Return: Alarm Disarmed'
+      conditions:
+      - condition: template
+        value_template: "{{ trigger.id == 'alarm_state_change' and \n   trigger.to_state.state
+          == 'disarmed' }}"
+      sequence:
+      - event: global_registry_update
+        event_data:
+          path: globals.environmental.global_posture
+          value: home
+      - event: universal_controller_command
+        event_data:
+          action_type: scene_cycle
+          action_value: restore
+          area_key: entrance
+  mode: restart

@@ -1,4 +1,3 @@
-
 # Loads default set of integrations. Do not remove.
 default_config:
 
@@ -11,12 +10,12 @@ script: !include scripts.yaml
 scene: !include scenes.yaml
 template: !include_dir_list templates/
 recorder:
-  purge_keep_days: 7       # Keeps 7 days of history instead of 10
-  auto_purge: true        # Cleans up every night at 4:12 AM
-  auto_repack: true       # Compresses the database twice a month
+  purge_keep_days: 7 # Keeps 7 days of history instead of 10
+  auto_purge: true # Cleans up every night at 4:12 AM
+  auto_repack: true # Compresses the database twice a month
   exclude:
     domains:
-      - automation         # Do you really need to see when every automation ran?
+      - automation # Do you really need to see when every automation ran?
       - updater
       - scene
     entity_globs:
@@ -24,5 +23,18 @@ recorder:
       - sensor.load_*
       - sensor.memory_*
     entities:
-      - sensor.date        # Updates every second/minute but never useful
+      - sensor.date # Updates every second/minute but never useful
       - sensor.time
+
+alarm_control_panel:
+  - platform: manual
+    name: "House Alarm"
+    unique_id: house_alarm
+    code: "1234"
+    arming_time: 30
+    delay_time: 20
+    trigger_time: 300
+    disarm_after_trigger: false
+    armed_away:
+      arming_time: 60
+      delay_time: 30

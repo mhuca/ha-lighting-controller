@@ -1,0 +1,13 @@
+trigger:
+  - trigger: mqtt
+    topic: "home/registry/matrix"
+  - trigger: homeassistant
+    event: start
+sensor:
+  - name: "Lighting Scene Matrix"
+    unique_id: "lighting_scene_matrix_global"
+    icon: mdi:distribute-vertical-center
+    state: "Ready"
+    attributes:
+      # Following the Global Variable Registry pattern for persistence
+      vars: "{{ trigger.payload | from_json if trigger.payload is defined else this.attributes.get('vars', {}) }}"
