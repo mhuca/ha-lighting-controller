@@ -1,0 +1,713 @@
+- id: "1773512740863"
+  alias: Universal Matrix Scene Executor
+  description: ""
+  triggers:
+    - event_type: universal_controller_command
+      event_data:
+        action_type: scene_cycle
+      trigger: event
+    - trigger: mqtt
+      id: MQTT_Message
+      options:
+        topic: home/universal/bus
+        payload: scene_cycle
+        value_template: "{{ value_json.action_type }}"
+  actions:
+    - variables:
+        registry:
+          "{% set reg = state_attr('sensor.global_variable_registry', 'vars')
+          %} \n{{ reg if reg is not none else {} }}\n"
+        g_logic: "{{ registry.get('globals', {}).get('logic_engines', {}) }}"
+        g_env: "{{ registry.get('globals', {}).get('environmental', {}) }}"
+        is_ready: "{{ g_env != {} and g_logic != {} }}"
+    - condition: template
+      value_template: "{{ is_ready }}"
+    - variables:
+        payload:
+          "{{ trigger.payload_json if trigger.id == 'MQTT_Message' else trigger.event.data
+          }}"
+        area: "{{ payload.area_key }}"
+        action: "{{ payload.action_value | default('next') }}"
+        matrix_sensor:
+          "{{ state_attr(g_logic.scene_matrix, 'vars') | default({},
+          true) }}"
+        matrix_list:
+          "{{ matrix_sensor.get(area, {}).values() | sort(attribute='sequence_weight')
+          | list }}"
+        current_scene_data:
+          "{{ state_attr(g_logic.scene_data, 'data') | default({},
+          true) }}"
+        current_state_obj:
+          "{{ current_scene_data.get(area, {\n  \"name\": \"off\",\n
+          \ \"sequence_weight\": 0\n}) }}"
+        current_scene_name: "{{ current_state_obj.name | default('off') }}"
+        current_scene:
+          "{% set match = matrix_list \n  | selectattr('name', 'eq', current_scene_name)
+          \n  | first \n  | default(none) %}\n{{ match if match is not none else (matrix_list[1]
+          if matrix_list | length > 1 else matrix_list | first) }}\n"
+        next_scene:
+          "{% set weight = current_scene.sequence_weight | default(0) | int
+          %}\n{% if action in ['raise', 'next'] %}\n  {{ matrix_list | selectattr('sequence_weight',
+          'gt', weight) | sort(attribute='sequence_weight') | first | default(matrix_list
+          | first) }}\n{% elif action in ['lower', 'previous'] %}\n  {{ matrix_list
+          | selectattr('sequence_weight', 'lt', weight) | sort(attribute='sequence_weight')
+          | last | default(matrix_list | last) }}\n{% elif action == 'max' %}\n  {{
+          matrix_list | last }}\n{% elif action in ['min'] %}\n  {{ matrix_list[1] if
+          matrix_list | length > 1 else matrix_list | first }}\n{% elif action in ['off']
+          %}\n  {{ matrix_list | first }}\n{% else %}\n  {{ current_scene }}\n{% endif
+          %}\n"
+    - condition: template
+      value_template: "{{ next_scene is not none }}"
+    - repeat:
+        until:
+          - condition: template
+            value_template:
+              "{{ repeat.index >= (next_scene.primary.keys() | list | length
+              if next_scene.primary is mapping else 1) }}"
+        sequence:
+          - variables:
+              is_map: "{{ next_scene.primary is mapping }}"
+              target:
+                "{% if is_map %}\n  {{ [ (next_scene.primary.keys() | list)[repeat.index
+                - 1] ] }}\n{% else %}\n  {{ [] }}\n{% endif %}"
+              val:
+                "{% if is_map %}\n  {{ (next_scene.primary.values() | list)[repeat.index
+                - 1] }}\n{% else %}\n  {{ next_scene.primary | default(0) }}\n{% endif
+                %}"
+          - event: universal_controller_command
+            event_data:
+              source_device: matrix_engine
+              action_type: light_call
+              area_key: "{{ area }}"
+              target_label: "{{ target }}"
+              action_value: "{{ val | int(0) if val != '' else '' }}"
+              command_input:
+                "{{ 'turn_off' if val | int(0) == 0 and val != '' else
+                'turn_on' }}"
+    - repeat:
+        until:
+          - condition: template
+            value_template:
+              "{{ repeat.index >= (next_scene.links.keys() | list | length
+              if next_scene.links is mapping else 1) }}"
+        sequence:
+          - variables:
+              link_area:
+                "{{ (next_scene.links.keys() | list)[repeat.index - 1] if next_scene.links
+                is mapping else none }}"
+              link_data:
+                "{{ (next_scene.links.values() | list)[repeat.index - 1] if next_scene.links
+                is mapping else none }}"
+          - condition: template
+            value_template: "{{ link_area is not none }}"
+          - repeat:
+              until:
+                - condition: template
+                  value_template:
+                    "{{ repeat.index >= (link_data.keys() | list | length
+                    if link_data is mapping else 1) }}"
+              sequence:
+                - variables:
+                    is_map: "{{ link_data is mapping }}"
+                    target:
+                      "{% if is_map %}\n  {{ [ (link_data.keys() | list)[repeat.index
+                      - 1] ] }}\n{% else %}\n  {{ [] }}\n{% endif %}"
+                    val:
+                      "{% if is_map %}\n  {{ (link_data.values() | list)[repeat.index
+                      - 1] }}\n{% else %}\n  {{ link_data | default(0) }}\n{% endif %}"
+                - event: universal_controller_command
+                  event_data:
+                    source_device: matrix_engine_link
+                    action_type: light_call
+                    area_key: "{{ link_area }}"
+                    target_label: "{{ target }}"
+                    action_value: "{{ val | int(0) if val != '' else '' }}"
+                    command_input:
+                      "{{ 'turn_off' if val | int(0) == 0 and val != ''
+                      else 'turn_on' }}"
+    - action: mqtt.publish
+      data:
+        topic: home/lighting/{{ area }}/current_scene
+        retain: true
+        payload:
+          "{\n  \"name\": \"{{ next_scene.name }}\",\n  \"sequence_weight\":
+          {{ next_scene.sequence_weight }}\n}\n"
+- id: "1773716570060"
+  alias: Universal Matrix Scene Executor V2.5
+  description: '# UNIVERSAL MATRIX SCENE EXECUTOR (V2.8.2)
+
+
+    ### 1. CORE PURPOSE
+
+    Executes lighting scene changes locally using the **Processed** profile provided
+    by the Node-RED Matrix Processor. This allows for sub-100ms scene transitions
+    by avoiding round-trips to the JS engine for navigation logic.
+
+
+
+    ### 2. NAVIGATION LOGIC (CLAMPED)
+
+    * **No Looping**: Navigation is intentionally clamped.
+
+    * **Raise/Next**: If already at the highest scene, the command is ignored (clamped
+    to max).
+
+    * **Lower/Previous**: If already at "Off" (Weight 0), the command is ignored (clamped
+    to 0).
+
+    * **Off/Max**: Absolute jumps to the start/end of the `sequence_weight` list.
+
+
+
+    ### 3. OPERATIONAL NOTES
+
+    * **V3.0 (Targeting)**: Moving toward the "Operational Hardening" checklist.
+
+    * **V2.8.2**: Fixed Markdown rendering issues for HA UI compatibility.
+
+    * **V2.8.1**: Cleaned up internal documentation and formatting.
+
+    * **V2.8**: Removed looping; implemented boundary clamping for Raise/Lower.
+
+    * **V2.7**: Hardened logic to prevent "sticky" states when starting from an "Off"
+    state.
+
+    * **V2.6**: Added support for list-based `target_label` inputs from physical controllers.
+
+
+
+    ### 4. DATA DEPENDENCIES
+
+    * **Config**: `sensor.[area_key]_matrix_config`
+
+    * **State**: `state_attr(g_logic.scene_data, ''data'')`
+
+
+    ### 5. YAML STANDARDS (PROJECT WIDE)
+
+    * **Self-Documentation**: All critical automations must include Markdown-formatted
+    documentation in the `description` block.
+
+    * **Change Log**: Maintain a versioned history within the `OPERATIONAL NOTES`
+    section.
+
+    * **No Inline Logic Comments**: Keep logic comments inside the `variables` or
+    `action` blocks, but high-level logic must be explained in Section 2 above.'
+  triggers:
+    - event_type: universal_controller_command
+      event_data:
+        action_type: scene_cycle
+      trigger: event
+    - trigger: mqtt
+      id: MQTT_Message
+      options:
+        topic: home/universal/bus
+        payload: scene_cycle
+        value_template: "{{ value_json.action_type }}"
+  actions:
+    - variables:
+        registry:
+          "{% set reg = state_attr('sensor.global_variable_registry', 'vars')
+          %} \n{{ reg if reg is not none else {} }}\n"
+        g_logic: "{{ registry.get('globals', {}).get('logic_engines', {}) }}"
+        g_env: "{{ registry.get('globals', {}).get('environmental', {}) }}"
+        is_ready: "{{ g_env != {} and g_logic != {} }}"
+    - condition: template
+      value_template: "{{ is_ready }}"
+    - variables:
+        payload:
+          "{{ trigger.payload_json if trigger.id == 'MQTT_Message' else trigger.event.data
+          }}"
+        area: "{{ payload.area_key }}"
+        action: "{{ payload.action_value | default('next') }}"
+        matrix_sensor:
+          "{{ state_attr('sensor.' ~ area ~ '_matrix_config', 'scenes')
+          | default({}, true) }}"
+        matrix_list:
+          "{{ matrix_sensor.values() | sort(attribute='sequence_weight')
+          | list }}"
+        current_scene_data:
+          "{{ state_attr(g_logic.scene_data, 'data') | default({},
+          true) }}"
+        current_state_obj:
+          "{{ current_scene_data.get(area, {\n  \"name\": \"off\",\n
+          \ \"sequence_weight\": 0\n}) }}"
+        current_scene_name: "{{ current_state_obj.name | default('off') }}"
+        current_scene:
+          "{% set match = matrix_list \n  | selectattr('name', 'eq', current_scene_name)
+          \n  | first \n  | default(none) %}\n{{ match if match is not none else (matrix_list[0]
+          if matrix_list | length > 0 else none) }}\n"
+        next_scene:
+          "{% set weight = current_scene.sequence_weight | default(0) | int
+          %}\n{% if action in ['raise', 'next'] %}\n  {{ matrix_list | selectattr('sequence_weight',
+          'gt', weight) | sort(attribute='sequence_weight') | first | default(current_scene)
+          }}\n{% elif action in ['lower', 'previous'] %}\n  {{ matrix_list | selectattr('sequence_weight',
+          'lt', weight) | sort(attribute='sequence_weight') | last | default(current_scene)
+          }}\n{% elif action == 'max' %}\n  {{ matrix_list | last }}\n{% elif action
+          in ['min'] %}\n  {{ matrix_list | selectattr('sequence_weight', 'gt', 0) |
+          sort(attribute='sequence_weight') | first | default(matrix_list | first) }}\n{%
+          elif action in ['off'] %}\n  {{ matrix_list | first }}\n{% else %}\n  {{ current_scene
+          }}\n{% endif %}\n"
+    - condition: template
+      value_template: "{{ next_scene is not none }}"
+    - repeat:
+        until:
+          - condition: template
+            value_template:
+              "{{ repeat.index >= (next_scene.primary.keys() | list | length
+              if next_scene.primary is mapping else 1) }}"
+        sequence:
+          - variables:
+              is_map: "{{ next_scene.primary is mapping }}"
+              target:
+                "{% if is_map %}\n  {% set key = (next_scene.primary.keys() | list)[repeat.index
+                - 1] %}\n  {{ [key] }}\n{% else %}\n  {{ [\"all\"] }}\n{% endif %}"
+              val:
+                "{% if is_map %}\n  {{ (next_scene.primary.values() | list)[repeat.index
+                - 1] }}\n{% else %}\n  {{ next_scene.primary | default(0) }}\n{% endif
+                %}"
+          - event: universal_controller_command
+            event_data:
+              source_device: matrix_engine
+              action_type: light_call
+              area_key: "{{ area }}"
+              target_label: "{{ target }}"
+              action_value: "{{ val | int(0) if val != '' else '' }}"
+              command_input:
+                "{{ 'turn_off' if val | int(0) == 0 and val != '' else
+                'turn_on' }}"
+    - repeat:
+        until:
+          - condition: template
+            value_template:
+              "{{ repeat.index >= (next_scene.links.keys() | list | length
+              if next_scene.links is mapping else 1) }}"
+        sequence:
+          - variables:
+              link_area:
+                "{{ (next_scene.links.keys() | list)[repeat.index - 1] if next_scene.links
+                is mapping else none }}"
+              link_data:
+                "{{ (next_scene.links.values() | list)[repeat.index - 1] if next_scene.links
+                is mapping else none }}"
+          - condition: template
+            value_template: "{{ link_area is not none }}"
+          - repeat:
+              until:
+                - condition: template
+                  value_template:
+                    "{{ repeat.index >= (link_data.keys() | list | length
+                    if link_data is mapping else 1) }}"
+              sequence:
+                - variables:
+                    is_map: "{{ link_data is mapping }}"
+                    target:
+                      "{% if is_map %}\n  {% set key = (link_data.keys() | list)[repeat.index
+                      - 1] %}\n  {{ [key] }}\n{% else %}\n  {{ [\"all\"] }}\n{% endif %}"
+                    val:
+                      "{% if is_map %}\n  {{ (link_data.values() | list)[repeat.index
+                      - 1] }}\n{% else %}\n  {{ link_data | default(0) }}\n{% endif %}"
+                - event: universal_controller_command
+                  event_data:
+                    source_device: matrix_engine_link
+                    action_type: light_call
+                    area_key: "{{ link_area }}"
+                    target_label: "{{ target }}"
+                    action_value: "{{ val | int(0) if val != '' else '' }}"
+                    command_input:
+                      "{{ 'turn_off' if val | int(0) == 0 and val != ''
+                      else 'turn_on' }}"
+    - action: mqtt.publish
+      data:
+        topic: home/lighting/{{ area }}/current_scene
+        retain: true
+        payload:
+          "{\n  \"name\": \"{{ next_scene.name }}\",\n  \"sequence_weight\":
+          {{ next_scene.sequence_weight }}\n}\n"
+  mode: restart
+- id: "1773767276738"
+  alias: Universal Matrix Scene Executor V2.8.4
+  description:
+    "# UNIVERSAL MATRIX SCENE EXECUTOR (V2.8.4)\n\n## 1. CORE PURPOSE\nExecutes
+    lighting scene changes locally using the **Processed** profile provided by the
+    Node-RED Matrix Processor. This version is \"Bus Pure,\"  meaning it exclusively
+    listens to the Universal Bus for all commands. This allows for sub-100ms scene
+    transitions by avoiding round-trips  to the JS engine for navigation logic.\n\n##
+    2. NAVIGATION LOGIC (UNIFIED)\n* **Bus Integration**: Listens to `home/universal/bus`
+    for unified observability.\n* **No Looping**: Navigation is intentionally clamped.\n*
+    **Relative**: Supports `next`, `previous`, `raise`, `lower`, `max`, `min`.\n*
+    **Absolute**: Automatically switches to an absolute jump if the `action_value`
+    \n  is a numeric weight (e.g., from the HA UI Selector).\n\n* **Boundary Clamping**:
+    If navigation hits the end of the `sequence_weight` list, \n  the command is ignored
+    (clamped).\n\n\n## 3. OPERATIONAL NOTES\n* **V2.8.4**: Replaced `home/matrix/+/set`
+    with unified `home/universal/bus` \n  triggering for better system observability.\n\n*
+    **V2.8.3**: Integrated MQTT UI Bridge logic and added Absolute Weight Jump.\n*
+    **V2.8.2**: Fixed Markdown rendering issues for HA UI compatibility.\n* **V2.8.1**:
+    Cleaned up internal documentation and formatting.\n* **V2.8**: Removed looping;
+    implemented boundary clamping for Raise/Lower.\n* **V2.7**: Hardened logic to
+    prevent \"sticky\" states when starting from an \"Off\" state.\n* **V2.6**: Added
+    support for list-based `target_label` inputs from physical controllers.\n\n##
+    4. DATA DEPENDENCIES\n* **Config**: `sensor.[area_key]_matrix_config`\n* **State**:
+    `state_attr(g_logic.scene_data, 'data')` (from `sensor.mqtt_scene_tracker_global`)\n\n##
+    5. YAML STANDARDS (PROJECT WIDE)\n* **Self-Documentation**: All critical automations
+    must include \n  Markdown-formatted documentation in the `description` block.\n\n*
+    **Change Log**: Maintain a versioned history within the `OPERATIONAL NOTES` section.\n*
+    **No Inline Logic Comments**: Keep logic comments inside the `variables` \n  or
+    `action` blocks; high-level logic resides in Section 2."
+  triggers:
+    - trigger: event
+      event_type: universal_controller_command
+      event_data:
+        action_type: scene_cycle
+    - trigger: mqtt
+      id: MQTT_Message
+      topic: home/universal/bus
+  actions:
+    - variables:
+        registry:
+          "{% set reg = state_attr('sensor.global_variable_registry', 'vars')
+          %} \n{{ reg if reg is not none else {} }}\n"
+        g_logic: "{{ registry.get('globals', {}).get('logic_engines', {}) }}"
+        g_env: "{{ registry.get('globals', {}).get('environmental', {}) }}"
+        is_ready: "{{ g_env != {} and g_logic != {} }}"
+    - condition: template
+      value_template: "{{ is_ready }}"
+    - variables:
+        payload:
+          "{{ trigger.payload_json if trigger.id == 'MQTT_Message' else trigger.event.data
+          }}"
+        area: "{{ payload.area_key }}"
+        action: "{{ payload.action_value | default('next') }}"
+        target_weight: "{{ action | int(-1) }}"
+        is_jump: "{{ target_weight >= 0 }}"
+        matrix_sensor:
+          "{{ state_attr('sensor.' ~ area ~ '_matrix_config', 'scenes')
+          | default({}, true) }}"
+        matrix_list:
+          "{{ matrix_sensor.values() | sort(attribute='sequence_weight')
+          | list }}"
+        current_scene_data:
+          "{{ state_attr(g_logic.scene_data, 'data') | default({},
+          true) }}"
+        current_state_obj:
+          "{{ current_scene_data.get(area, {\n  \"name\": \"off\",\n
+          \ \"sequence_weight\": 0\n}) }}"
+        current_scene_name: "{{ current_state_obj.name | default('off') }}"
+        current_scene:
+          "{% set match = matrix_list \n  | selectattr('name', 'eq', current_scene_name)
+          \n  | first \n  | default(none) %}\n{{ match if match is not none else (matrix_list[0]
+          if matrix_list | length > 0 else none) }}\n"
+        next_scene:
+          "{% set weight = current_scene.sequence_weight | default(0) | int
+          %}\n{% if is_jump %}\n  {{ matrix_list | selectattr('sequence_weight', 'eq',
+          target_weight) | first | default(current_scene) }}\n{% elif action in ['raise',
+          'next'] %}\n  {{ matrix_list | selectattr('sequence_weight', 'gt', weight)
+          | sort(attribute='sequence_weight') | first | default(current_scene) }}\n{%
+          elif action in ['lower', 'previous'] %}\n  {{ matrix_list | selectattr('sequence_weight',
+          'lt', weight) | sort(attribute='sequence_weight') | last | default(current_scene)
+          }}\n{% elif action == 'max' %}\n  {{ matrix_list | last }}\n{% elif action
+          in ['min'] %}\n  {{ matrix_list | selectattr('sequence_weight', 'gt', 0) |
+          sort(attribute='sequence_weight') | first | default(matrix_list | first) }}\n{%
+          elif action in ['off'] %}\n  {{ matrix_list | first }}\n{% else %}\n  {{ current_scene
+          }}\n{% endif %}\n"
+    - condition: template
+      value_template: "{{ next_scene is not none }}"
+    - repeat:
+        until:
+          - condition: template
+            value_template:
+              "{{ repeat.index >= (next_scene.primary.keys() | list | length
+              if next_scene.primary is mapping else 1) }}"
+        sequence:
+          - variables:
+              is_map: "{{ next_scene.primary is mapping }}"
+              target:
+                "{% if is_map %}\n  {% set key = (next_scene.primary.keys() | list)[repeat.index
+                - 1] %}\n  {{ [key] }}\n{% else %}\n  {{ [\"all\"] }}\n{% endif %}"
+              val:
+                "{% if is_map %}\n  {{ (next_scene.primary.values() | list)[repeat.index
+                - 1] }}\n{% else %}\n  {{ next_scene.primary | default(0) }}\n{% endif
+                %}"
+          - event: universal_controller_command
+            event_data:
+              source_device: matrix_engine
+              action_type: light_call
+              area_key: "{{ area }}"
+              target_label: "{{ target }}"
+              action_value: "{{ val | int(0) if val != '' else '' }}"
+              command_input:
+                "{{ 'turn_off' if val | int(0) == 0 and val != '' else
+                'turn_on' }}"
+    - repeat:
+        until:
+          - condition: template
+            value_template:
+              "{{ repeat.index >= (next_scene.links.keys() | list | length
+              if next_scene.links is mapping else 1) }}"
+        sequence:
+          - variables:
+              link_area:
+                "{{ (next_scene.links.keys() | list)[repeat.index - 1] if next_scene.links
+                is mapping else none }}"
+              link_data:
+                "{{ (next_scene.links.values() | list)[repeat.index - 1] if next_scene.links
+                is mapping else none }}"
+          - condition: template
+            value_template: "{{ link_area is not none }}"
+          - repeat:
+              until:
+                - condition: template
+                  value_template:
+                    "{{ repeat.index >= (link_data.keys() | list | length
+                    if link_data is mapping else 1) }}
+
+                    "
+              sequence:
+                - variables:
+                    is_map: "{{ link_data is mapping }}"
+                    target:
+                      "{% if is_map %}\n  {% set key = (link_data.keys() | list)[repeat.index
+                      - 1] %}\n  {{ [key] }}\n{% else %}\n  {{ [\"all\"] }}\n{% endif %}"
+                    val:
+                      "{% if is_map %}\n  {{ (link_data.values() | list)[repeat.index
+                      - 1] }}\n{% else %}\n  {{ link_data | default(0) }}\n{% endif %}"
+                - event: universal_controller_command
+                  event_data:
+                    source_device: matrix_engine_link
+                    action_type: light_call
+                    area_key: "{{ link_area }}"
+                    target_label: "{{ target }}"
+                    action_value: "{{ val | int(0) if val != '' else '' }}"
+                    command_input:
+                      "{{ 'turn_off' if val | int(0) == 0 and val != ''
+                      else 'turn_on' }}"
+    - action: mqtt.publish
+      data:
+        topic: home/lighting/{{ area }}/current_scene
+        retain: true
+        payload:
+          "{\n  \"name\": \"{{ next_scene.name }}\",\n  \"sequence_weight\":
+          {{ next_scene.sequence_weight }}\n}\n"
+  mode: restart
+- id: "1773771624950"
+  alias: Universal Matrix Scene Executor V2.9.0
+  description: '# UNIVERSAL MATRIX SCENE EXECUTOR (V2.9.2)
+
+
+    ## 1. CORE PURPOSE
+
+
+    Executes lighting scene changes locally using the **Processed** profile provided
+    by the Node-RED Matrix Processor. This version is "Bus Pure," meaning it exclusively
+    listens to the Universal Bus for all commands.
+
+
+    ## 2. ARCHITECTURAL LOGIC
+
+
+    * **Bus Integration**: Listens to `home/universal/bus` for unified observability.
+
+
+    * **Relative Commands**: Supports `next`, `previous`, `raise`, `lower`, `max`,
+    `min`.
+
+
+    * **Absolute Jumps**: Automatically switches to an absolute jump if `action_value`
+    is a numeric weight (e.g., from the HA UI Selector).
+
+
+    * **Restore Logic**: If `action_value` is `restore`, the engine pulls the weight
+    from `sensor.[area]_matrix_previous_scene` to return the room to its last state.
+
+
+    * **Lock Down Logic**: If `action_value` is `lock_down`, the engine physically
+    forces all labels to 0 (Off) but suppresses the `mqtt.publish` to preserve logical
+    state memory during "Away" postures.
+
+
+    ## 3. OPERATIONAL NOTES
+
+
+    * **V2.9.2**: Applied V3.0 Documentation Standards; refined spacing and bold key
+    formatting.
+
+
+    * **V2.9.1**: Integrated `lock_down` physical override with `restore` state logic.
+
+
+    * **V2.9.0**: Added `restore` logic to leverage the V3.1 Discovery Generator memory.
+
+
+    * **V2.8.4**: Replaced `home/matrix/+/set` with unified `home/universal/bus`.
+
+
+    * **V2.8.0**: Removed looping; implemented boundary clamping for Raise/Lower.
+
+
+    ## 4. DATA DEPENDENCIES
+
+
+    * **Config**: `sensor.[area_key]_matrix_config`
+
+
+    * **Memory**: `sensor.[area_key]_matrix_previous_scene`
+
+
+    * **State**: `state_attr(g_logic.scene_data, ''data'')`
+
+
+    ## 5. YAML STANDARDS (PROJECT WIDE)
+
+
+    * **Self-Documentation**: All critical automations must include Markdown-formatted
+    documentation in the `description` block.
+
+
+    * **Code References**: Use backticks ` for entity IDs, attributes, or technical
+    slugs (e.g., `area_id`, `weight_0`).'
+  triggers:
+    - trigger: event
+      event_type: universal_controller_command
+      event_data:
+        action_type: scene_cycle
+    - trigger: mqtt
+      id: MQTT_Message
+      topic: home/universal/bus
+  actions:
+    - variables:
+        registry:
+          "{% set reg = state_attr('sensor.global_variable_registry', 'vars')
+          %} \n{{ reg if reg is not none else {} }}\n"
+        g_logic: "{{ registry.get('globals', {}).get('logic_engines', {}) }}"
+        is_ready: "{{ g_logic != {} }}"
+    - condition: template
+      value_template: "{{ is_ready }}"
+    - variables:
+        payload:
+          "{{ trigger.payload_json if trigger.id == 'MQTT_Message' else trigger.event.data
+          }}"
+        area: "{{ payload.area_key }}"
+        action: "{{ payload.action_value | default('next') }}"
+        restore_val:
+          "{% if action == 'restore' %}\n  {% set prev = states('sensor.'
+          ~ area ~ '_matrix_previous_scene') %}\n  {{ prev.split(':')[0] | int(-1) if
+          prev not in ['unknown', 'unavailable'] else -1 }}\n{% else %}\n  -1\n{% endif
+          %}"
+        target_weight:
+          "{{ restore_val if action == 'restore' else action | int(-1)
+          }}"
+        is_jump: "{{ target_weight >= 0 }}"
+        is_lock_down: "{{ action == 'lock_down' }}"
+        matrix_sensor:
+          "{{ state_attr('sensor.' ~ area ~ '_matrix_config', 'scenes')
+          | default({}, true) }}"
+        matrix_list:
+          "{{ matrix_sensor.values() | sort(attribute='sequence_weight')
+          | list }}"
+        current_scene_data:
+          "{{ state_attr(g_logic.scene_data, 'data') | default({},
+          true) }}"
+        current_state_obj:
+          "{{ current_scene_data.get(area, {\n  \"name\": \"off\",\n
+          \ \"sequence_weight\": 0\n}) }}"
+        current_scene_name: "{{ current_state_obj.name | default('off') }}"
+        current_scene:
+          "{% set match = matrix_list \n  | selectattr('name', 'eq', current_scene_name)
+          \n  | first \n  | default(none) %}\n{{ match if match is not none else (matrix_list[0]
+          if matrix_list | length > 0 else none) }}\n"
+        next_scene:
+          "{% set weight = current_scene.sequence_weight | default(0) | int
+          %}\n{% if is_jump %}\n  {{ matrix_list | selectattr('sequence_weight', 'eq',
+          target_weight) | first | default(current_scene) }}\n{% elif action in ['raise',
+          'next'] %}\n  {{ matrix_list | selectattr('sequence_weight', 'gt', weight)
+          | sort(attribute='sequence_weight') | first | default(current_scene) }}\n{%
+          elif action in ['lower', 'previous'] %}\n  {{ matrix_list | selectattr('sequence_weight',
+          'lt', weight) | sort(attribute='sequence_weight') | last | default(current_scene)
+          }}\n{% elif action == 'max' %}\n  {{ matrix_list | last }}\n{% elif action
+          in ['min'] %}\n  {{ matrix_list | selectattr('sequence_weight', 'gt', 0) |
+          sort(attribute='sequence_weight') | first | default(matrix_list | first) }}\n{%
+          elif action in ['off','lock_down'] %}\n  {{ matrix_list | first }}\n{% else
+          %}\n  {{ current_scene }}\n{% endif %}\n"
+    - condition: template
+      value_template: "{{ next_scene is not none }}"
+    - repeat:
+        until:
+          - condition: template
+            value_template:
+              "{{ repeat.index >= (next_scene.primary.keys() | list | length
+              if next_scene.primary is mapping else 1) }}"
+        sequence:
+          - variables:
+              is_map: "{{ next_scene.primary is mapping }}"
+              target:
+                "{% if is_map %}\n  {% set key = (next_scene.primary.keys() | list)[repeat.index
+                - 1] %}\n  {{ [key] }}\n{% else %}\n  {{ [\"all\"] }}\n{% endif %}"
+              val:
+                "{% if is_map %}\n  {{ (next_scene.primary.values() | list)[repeat.index
+                - 1] }}\n{% else %}\n  {{ next_scene.primary | default(0) }}\n{% endif
+                %}"
+          - event: universal_controller_command
+            event_data:
+              source_device: matrix_engine
+              action_type: light_call
+              area_key: "{{ area }}"
+              target_label: "{{ target }}"
+              action_value: "{{ val | int(0) if val != '' else '' }}"
+              command_input:
+                "{{ 'turn_off' if val | int(0) == 0 and val != '' else
+                'turn_on' }}"
+    - repeat:
+        until:
+          - condition: template
+            value_template:
+              "{{ repeat.index >= (next_scene.links.keys() | list | length
+              if next_scene.links is mapping else 1) }}"
+        sequence:
+          - variables:
+              link_area:
+                "{{ (next_scene.links.keys() | list)[repeat.index - 1] if next_scene.links
+                is mapping else none }}"
+              link_data:
+                "{{ (next_scene.links.values() | list)[repeat.index - 1] if next_scene.links
+                is mapping else none }}"
+          - condition: template
+            value_template: "{{ link_area is not none }}"
+          - repeat:
+              until:
+                - condition: template
+                  value_template:
+                    "{{ repeat.index >= (link_data.keys() | list | length
+                    if link_data is mapping else 1) }}
+
+                    "
+              sequence:
+                - variables:
+                    is_map: "{{ link_data is mapping }}"
+                    target:
+                      "{% if is_map %}\n  {% set key = (link_data.keys() | list)[repeat.index
+                      - 1] %}\n  {{ [key] }}\n{% else %}\n  {{ [\"all\"] }}\n{% endif %}"
+                    val:
+                      "{% if is_map %}\n  {{ (link_data.values() | list)[repeat.index
+                      - 1] }}\n{% else %}\n  {{ link_data | default(0) }}\n{% endif %}"
+                - event: universal_controller_command
+                  event_data:
+                    source_device: matrix_engine_link
+                    action_type: light_call
+                    area_key: "{{ link_area }}"
+                    target_label: "{{ target }}"
+                    action_value: "{{ val | int(0) if val != '' else '' }}"
+                    command_input:
+                      "{{ 'turn_off' if val | int(0) == 0 and val != ''
+                      else 'turn_on' }}"
+    - if:
+        - condition: template
+          value_template: "{{ not is_lock_down }}"
+      then:
+        - action: mqtt.publish
+          data:
+            topic: home/lighting/{{ area }}/current_scene
+            retain: true
+            payload:
+              "{\n  \"name\": \"{{ next_scene.name }}\",\n  \"sequence_weight\":
+              {{ next_scene.sequence_weight }}\n}\n"
+  mode: restart

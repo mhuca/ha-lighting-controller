@@ -1,50 +1,3 @@
-- id: '1771459793961'
-  alias: 'Bridge Export: Universal Controller Command'
-  description: ''
-  triggers:
-  - event_type: universal_controller_command
-    trigger: event
-    event_data:
-      command_input: broadcast
-  conditions:
-  - condition: template
-    value_template: '{{ trigger.event.data.controller_id is not defined }}'
-  actions:
-  - variables:
-      payload: '{{ dict(trigger.event.data, controller_id = ''lighting_primary'')  |
-        to_json  }}
-
-        '
-  - data:
-      topic: home/universal/bus
-      payload: '{{ payload }}
-
-        '
-    action: mqtt.publish
-- id: '1771460330281'
-  alias: 'Bridge Import: Universal Controller Command'
-  description: ''
-  triggers:
-  - trigger: mqtt
-    options:
-      topic: home/universal/bus
-  conditions:
-  - condition: template
-    value_template: '{{ (trigger.payload | from_json).controller_id != ''lighting_primary''
-      }}'
-  actions:
-  - variables:
-      payload: '{{ trigger.payload }}'
-  - event: universal_controller_command
-    event_data:
-      controller_id: '{{ payload.controller_id }}'
-      source_device: '{{ payload.source_device }}'
-      action_type: '{{  payload.action_type }}'
-      action_value: '{{  payload.action_value }}'
-      command_input: '{{  payload.command_input }}'
-      area_key: '{{  payload.area_key }}'
-      target_label: '{{ payload.target_label }}'
-      data_payload: '{{ payload.data_payload }}'
 - id: '1771474376945'
   alias: Light Call - Turn On
   description: ''
@@ -98,7 +51,7 @@
         min:
           brightness: 25
         night_mode:
-          brightness: 90
+          brightness: 25
         day_mode:
           brightness: 190
         release:
@@ -462,6 +415,8 @@
   - trigger: mqtt
     options:
       topic: zigbee2mqtt/+
+      payload: true
+      value_template: '{{ value_json.detach_relay_mode }}'
   conditions:
   - condition: template
     value_template: "{% set payload = trigger.payload_json %}\n{{ payload.action is
@@ -3581,3 +3536,87 @@
           action_value: restore
           area_key: entrance
   mode: restart
+- id: '1774585695262'
+  alias: Active Area Overrides Manager
+  description: "# ACTIVE AREA OVERRIDES MANAGER\n## 1. CORE PURPOSE Manages a dynamic
+    list of areas that are currently \"Locked\" from  automatic Matrix changes.\n\n##
+    2. OPERATIONAL LOGIC * **Trigger**: Listens for `universal_controller_command`
+    with `action_type: light_override`. \n\n* **Command On**: Adds the `area_key`
+    to the `overridden_areas` attribute. \n\n* **Command Off**: Removes the `area_key`
+    from the list. "
+  triggers: []
+  conditions: []
+  actions: []
+  mode: single
+- id: '1774585784271'
+  alias: Active Area Overrides Manager
+  description: "# ACTIVE AREA OVERRIDES MANAGER\n## 1. CORE PURPOSE Manages a dynamic
+    list of areas that are currently \"Locked\" from  automatic Matrix changes.\n\n##
+    2. OPERATIONAL LOGIC \n\n* **Trigger**: Listens for `universal_controller_command`
+    with `action_type: light_override`.\n\n * **Command On**: Adds the `area_key`
+    to the `overridden_areas` attribute. \n\n* **Command Off**: Removes the `area_key`
+    from the list. "
+  triggers: []
+  conditions: []
+  actions: []
+  mode: single
+- id: '1774585922199'
+  alias: Active Area Overrides Manager
+  description: '# ACTIVE AREA OVERRIDES MANAGER
+
+    ## 1. CORE PURPOSE
+
+    Manages a dynamic list of areas that are currently "Locked" from  automatic Matrix
+    changes.
+
+    ## 2. OPERATIONAL LOGIC
+
+    * **Trigger**: Listens for `universal_controller_command` with `action_type: light_override`.
+
+    * **Command On**: Adds the `area_key` to the `overridden_areas` attribute.
+
+    * **Command Off**: Removes the `area_key` from the list.'
+  triggers: []
+  conditions: []
+  actions: []
+  mode: single
+- id: '1774585928182'
+  alias: Active Area Overrides Manager
+  description: '# ACTIVE AREA OVERRIDES MANAGER
+
+    ## 1. CORE PURPOSE
+
+    Manages a dynamic list of areas that are currently "Locked" from  automatic Matrix
+    changes.
+
+    ## 2. OPERATIONAL LOGIC
+
+    * **Trigger**: Listens for `universal_controller_command` with `action_type: light_override`.
+
+    * **Command On**: Adds the `area_key` to the `overridden_areas` attribute.
+
+    * **Command Off**: Removes the `area_key` from the list.'
+  triggers: []
+  conditions: []
+  actions: []
+  mode: single
+- id: '1774585986695'
+  alias: Active Area Overrides Manager
+  description: '# ACTIVE AREA OVERRIDES MANAGER
+
+    ## 1. CORE PURPOSE
+
+    Manages a dynamic list of areas that are currently "Locked" from  automatic Matrix
+    changes.
+
+    ## 2. OPERATIONAL LOGIC
+
+    * **Trigger**: Listens for `universal_controller_command` with `action_type: light_override`.
+
+    * **Command On**: Adds the `area_key` to the `overridden_areas` attribute.
+
+    * **Command Off**: Removes the `area_key` from the list.'
+  triggers: []
+  conditions: []
+  actions: []
+  mode: single

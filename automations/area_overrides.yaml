@@ -1,0 +1,48 @@
+###############################################################################
+# AREA OVERRIDES (V3.0)
+# This module manages the "Active Area Overrides" sensor.
+# It listens for the 'light_override' command on the UCC Bus to lock/unlock areas.
+###############################################################################
+
+- id: "ucc_active_area_registry_manager"
+  alias: "Active Area Overrides Manager"
+  description: >-
+    # ACTIVE AREA OVERRIDES MANAGER
+
+    ## 1. CORE PURPOSE
+
+    Manages a dynamic list of areas that are currently "Locked" from 
+    automatic Matrix changes.
+
+    ## 2. OPERATIONAL LOGIC
+
+    * **Trigger**: Listens for `universal_controller_command` with `action_type: light_override`.
+
+    * **Command On**: Adds the `area_key` to the `overridden_areas` attribute.
+
+    * **Command Off**: Removes the `area_key` from the list.
+  trigger: []
+  condition: []
+  actions: []
+
+- id: "ucc_auto_clear_overrides_on_posture"
+  alias: "Auto-Clear Overrides on Posture Change"
+  description: "Clears all manual overrides when the house moves to a high-priority posture (like Away or Sleep)."
+  trigger:
+    - trigger: event
+      event_type: global_registry_update
+      event_data:
+        path: globals.environmental.global_posture
+  condition:
+    - condition: template
+      value_template: "{{ trigger.event.data.value in ['away', 'vacation', 'sleep'] }}"
+  actions:
+    - repeat:
+        for_each: "{{ state_attr('sensor.active_area_overrides', 'overridden_areas') or [] }}"
+        sequence:
+          - event: universal_controller_command
+            event_data:
+              action_type: light_override
+              command_input: "off"
+              area_key: "{{ repeat.item }}"
+              source_device: "posture_manager_cleanup"

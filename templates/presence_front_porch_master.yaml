@@ -21,11 +21,8 @@ binary_sensor:
         | selectattr('state', 'eq', 'on') | list | count > 0 %}
 
       {# 4. Final Logic with Boolean Cheat #}
-      {% if house_is_in_night_posture and any_active %}
-        {{ 1 == 1 }}
-      {% else %}
-        {{ -1 > 0 }}
-      {% endif %}
+      {{house_is_in_night_posture and any_active }}
+      
     attributes:
       last_source: >
         {% set state = states('sensor.front_person_master') %}

@@ -28,7 +28,7 @@ sensor:
             {{ current }}
           {% endif %}
         {% endif %}
-    
+
       override_expiry: >
         {% set current = state_attr('sensor.active_area_overrides', 'override_expiry') or {} %}
         {% set area_key = trigger.event.data.area_key %}
@@ -48,4 +48,3 @@ sensor:
         {% else %}
           {{ current }}
         {% endif %}
-

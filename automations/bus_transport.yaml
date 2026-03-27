@@ -1,0 +1,49 @@
+- id: "1771459793961"
+  alias: "Bridge Export: Universal Controller Command"
+  description: ""
+  triggers:
+    - event_type: universal_controller_command
+      trigger: event
+      event_data:
+        command_input: broadcast
+  conditions:
+    - condition: template
+      value_template: "{{ trigger.event.data.controller_id is not defined }}"
+  actions:
+    - variables:
+        payload:
+          "{{ dict(trigger.event.data, controller_id = 'lighting_primary')  |
+          to_json  }}
+
+          "
+    - data:
+        topic: home/universal/bus
+        payload: "{{ payload }}
+
+          "
+      action: mqtt.publish
+- id: "1771460330281"
+  alias: "Bridge Import: Universal Controller Command"
+  description: ""
+  triggers:
+    - trigger: mqtt
+      options:
+        topic: home/universal/bus
+  conditions:
+    - condition: template
+      value_template:
+        "{{ (trigger.payload | from_json).controller_id != 'lighting_primary'
+        }}"
+  actions:
+    - variables:
+        payload: "{{ trigger.payload }}"
+    - event: universal_controller_command
+      event_data:
+        controller_id: "{{ payload.controller_id }}"
+        source_device: "{{ payload.source_device }}"
+        action_type: "{{  payload.action_type }}"
+        action_value: "{{  payload.action_value }}"
+        command_input: "{{  payload.command_input }}"
+        area_key: "{{  payload.area_key }}"
+        target_label: "{{ payload.target_label }}"
+        data_payload: "{{ payload.data_payload }}"
