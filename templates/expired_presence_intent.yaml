@@ -1,0 +1,25 @@
+sensor:
+  - name: "Expired Presence Intent Master"
+    unique_id: expired_presence_intent_master_001
+    state: >
+      {% set entities = label_entities('lights_off') %}
+
+      {% set active = entities | unique 
+        | expand 
+        | selectattr('state', 'in', ['expired']) 
+        | sort(attribute='last_changed') 
+        | map(attribute='entity_id') | list %}
+
+      {% if active | count > 0 %}
+        {% set lead = active | last %}
+        {{ lead }}@{{ states[lead].last_changed }}
+      {% else %}
+        none
+      {% endif %}
+    attributes:
+      expired_entities: >
+        {% set entities = label_entities('lights_off') %}
+        {{ entities | unique 
+          | expand 
+          | selectattr('state', 'in', ['expired']) 
+          | map(attribute='entity_id') | list }}

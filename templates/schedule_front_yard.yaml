@@ -1,0 +1,13 @@
+trigger:
+  - trigger: state
+    entity_id:
+      - binary_sensor.daily_lights_sensor
+  - trigger: state
+    entity_id:
+      - sun.sun
+sensor:
+  - name: "Front Yard Light Schedule"
+    unique_id: front_yard_light_schedule
+    # We removed the delay_off here because the Lutron handles the 5 mins
+    state: >-
+      select.front_yard_matrix_schedule@{{ states[this.entity_id].last_changed }}@{{ states('binary_sensor.daily_lights_sensor') }}

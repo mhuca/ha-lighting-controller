@@ -1,6 +1,6 @@
 trigger:
   - trigger: mqtt
-    topic: "home/lighting/+/current_scene"
+    topic: "homeassistant/sensor/+/scene_config/state"
 sensor:
   - name: "MQTT Scene Tracker"
     unique_id: "mqtt_scene_tracker_global"
@@ -16,3 +16,5 @@ sensor:
         {% for k, v in current.items() if k != area %}
           {% set ns.new = dict(ns.new, **{k: v}) %}
         {% endfor %}
+
+# state_topic: homeassistant/sensor/living_room/scene_config/state

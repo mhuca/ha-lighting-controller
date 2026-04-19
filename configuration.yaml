@@ -5,11 +5,13 @@ default_config:
 frontend:
   themes: !include_dir_merge_named themes
 
-#automation: !include automations.yaml
-automation: !include_dir_merge_list automations/
+automation: !include automations.yaml
+automation yaml: !include_dir_merge_list automations/
+mqtt: !include mqtt.yaml
 script: !include scripts.yaml
 scene: !include scenes.yaml
 template: !include_dir_list templates/
+
 recorder:
   purge_keep_days: 7 # Keeps 7 days of history instead of 10
   auto_purge: true # Cleans up every night at 4:12 AM
@@ -29,13 +31,19 @@ recorder:
 
 alarm_control_panel:
   - platform: manual
-    name: "House Alarm"
-    unique_id: house_alarm
-    code: "1234"
+    name: Home Alarm
+    unique_id: dce1d21b-d31c-40d3-8057-d8af72319aaa
+    code: "1111"
     arming_time: 30
     delay_time: 20
-    trigger_time: 300
-    disarm_after_trigger: false
+    trigger_time: 10
+    arming_states:
+      - armed_away
+      - armed_night
+    disarmed:
+      trigger_time: 0
+    armed_night:
+      trigger_time: 0
     armed_away:
-      arming_time: 60
-      delay_time: 30
+      arming_time: 0
+      delay_time: 0

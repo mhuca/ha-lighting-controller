@@ -1,71 +1,220 @@
+# =========================================================
+# GPE REGISTRY INTERACTION STANDARDS (The Decision Matrix)
+# =========================================================
+
+# SCENARIO A: Persistent Presence (Presence Master, App Occupancy)
+# Strategy: Use Infinite Claims (-1)
+# ---------------------------------------------------------
+# - ON:  { action: 'add', owner_id: '...', seconds: -1 }
+# - OFF: { action: 'remove', owner_id: '...' }
+# *Why: 'remove' is cleaner for Master sensors as it bypasses
+#       the GPE Cleaner's 'Warn/Dim' logic entirely.*
+
+# SCENARIO B: Transient Events (Remote Buttons, Voice Commands)
+# Strategy: Use Timed Claims (Seconds)
+# ---------------------------------------------------------
+# - ON: { action: 'add', owner_id: '...', seconds: 120 }
+# *Why: These acts as 'Safety Net' pulses. If the user stops
+#       interacting, the Registry naturally expires them.*
+
+# SCENARIO C: Intentional Cancellation (Stop Sleep Timer, Party Mode Off)
+# Strategy: Use Immediate Expiry (Seconds: 0)
+# ---------------------------------------------------------
+# - OFF: { action: 'add', owner_id: '...', seconds: 0, skip_warning: true }
+# *Why: Use this when you want the GPE Cleaner to handle the
+#       shut-down sequence (including logging) but skip the dimming.*
+
+# =========================================================
+# IMPLEMENTATION EXAMPLES
+# =========================================================
+
+# 1. Presence Master OFF Automation:
+# action:
+#   - event: lighting_registry_update
+#     event_data:
+#       action: remove
+#       owner_id: presence_master
+#       area_key: living_room
+
+# 2. Sofabaton Button Press:
+# action:
+#   - event: lighting_registry_update
+#     event_data:
+#       action: add
+#       owner_id: sofabaton
+#       area_key: living_room
+#       seconds: 120
+
+# =========================================================
+# GPE LIGHTING OFF REGISTRY (V6.3)
+# Standardized: claimant, area_key, action, seconds
+# Optimized: Lock Sovereignty & Accidental Downgrade Protection
+# =========================================================
+
 trigger:
   - trigger: event
-    event_type: "lighting_registry_update"
+    event_type: lighting_registry_update
   - trigger: event
     event_type: "esphome.lighting_registry_update"
+  - trigger: event
+    event_type: "universal_controller_command"
+    event_data:
+      action_type: "lighting_registry_update"
+  - trigger: event
+    event_type: "universal_controller_command"
+    event_data:
+      action_type: "light_override"
+  - trigger: mqtt
+    id: MQTT_Bus
+    topic: home/universal/bus
+  - trigger: time_pattern
+    id: "Watchdog"
+    minutes: "/30"
+
 sensor:
-  - name: "Lighting Off Registry"
-    unique_id: lighting_off_registry
-    state: >
-      {{ 'active' if this.attributes.get('active_timers', {}) | count > 0 else 'idle' }}
+  - name: Lighting Off Registry
+    unique_id: gpe_lighting_off_registry_v6
+    icon: mdi:layers-triple
+    state: >-
+      {% set intents = this.attributes.active_intents | default({}, true) %}
+      {{ 'active' if (intents | list | reject('eq', '_global_') | list | count > 0) else 'idle' }}
     attributes:
-      active_timers: >
-        {% set current = this.attributes.get('active_timers', {}) %}
-        {% set action = trigger.event.data.action %}
-        {% set area = trigger.event.data.area_key %}
+      active_areas: >-
+        {{ (this.attributes.active_intents | default({}, true)).keys() | list | reject('eq', '_global_') | list }}
+      active_intents: >-
+        {% set registry = state_attr('sensor.global_variable_registry', 'vars') | default({}, true) %}
+        {% set g_env = registry.get('environmental', {}) %}
+        {% set placeholder = {"_global_": [{"type": "status", "claimant": "system", "status": "idle", "last_updated": now().isoformat()}]} %}
+        {% set current = this.attributes.active_intents | default(placeholder, true) %}
 
-        {% if action == 'add' %}
-          {# Universal Entry: Resets state and applies 'skip_warning' flag #}
-          {# 1. Boolean & Type Re-hydration #}
-          {% set skip = (trigger.event.data.skip_warning == 'true') %}
-          {% set force_unlock = (trigger.event.data.locked == 'false') %}
-          {% set seconds = (trigger.event.data.seconds | default(120)) | int %}
-          
-          {# 2. Accurate Time Resolution #}
-          {% set event_ts = trigger.event.data.timestamp %}
-          {% if event_ts is defined %}
-            {% set base_time = as_datetime(as_timestamp(event_ts)) %}
-          {% else %}
-            {% set base_time = as_datetime(trigger.time_fired) | default(now(), true) %}
-          {% endif %}
-
-          {% set expiry = (base_time + timedelta(seconds=seconds)).isoformat() %}
-          {% set is_locked = current[area].locked if area in current else false %}
-          {% set event_locked = trigger.event.data.locked %}
-          {% set final_lock = false if force_unlock else is_locked %}
-          {{ dict(current, **{area: {'expiry': expiry, 'locked': final_lock, 'warned': false, 'skip_warning': skip}}) }}
-        {% elif action == 'lock' %}
-          {# Privacy/Occupancy Lock: Timer exists but Cleaner will ignore it #}
-          {% if area in current %}
-            {% set entry = current[area] %}
-            {{ dict(current, **{area: dict(entry, locked=true)}) }}
-          {% else %}
-            {{ current }} 
-          {% endif %}
-
-        {% elif action == 'warned' %}
-          {# Stage 1 Expiry: The Dim Warning has been issued, set final 20s fuse #}
-          {% if area in current %}
-            {% set entry = current[area] %}
-            {% set final_expiry = (now() + timedelta(seconds=20)).isoformat() %}
-            {{ dict(current, **{area: dict(entry, expiry=final_expiry, warned=true)}) }}
-          {% else %}
-            {{ current }}
-          {% endif %}
-
-
-        {% elif action == 'remove' %}
-          {# Rebuild the dict by explicitly skipping the target key #}
-          {% set ns = namespace(new={}) %}
-          {% for k, v in current.items() if k != area %}
-            {% set ns.new = dict(ns.new, **{k: v}) %}
+        {# --- WATCHDOG CLEANUP --- #}
+        {% if trigger.id == 'Watchdog' %}
+          {% set ns = namespace(cleaned={}) %}
+          {% for area, stack in current.items() if area != '_global_' %}
+            {% set valid_stack = stack | selectattr('expiry', 'none') | list + 
+                                  stack | rejectattr('expiry', 'none') | 
+                                  selectattr('expiry', 'gt', now().isoformat()) | list %}
+            {% if valid_stack | count > 0 %}
+              {% set ns.cleaned = dict(ns.cleaned, **{area: valid_stack}) %}
+            {% endif %}
           {% endfor %}
-          {{ ns.new }}
+          {{ ns.cleaned if ns.cleaned | count > 0 else placeholder }}
 
-        {% elif action == 'clear_all' %}
-          {# Emergency Flush for IT Operations #}
-          {{ {} }}
-
+        {# --- EVENT PROCESSING --- #}
         {% else %}
-          {{ current }}
+          {% set p = (trigger.payload | from_json) if trigger.platform == 'mqtt' else trigger.event.data %}
+          {% set action_type = p.action_type | default('lighting_registry_update') %}
+          
+          {% if trigger.platform == 'mqtt' and action_type not in ['lighting_registry_update', 'light_override'] %}
+            {{ current }}
+          {% else %}
+            {% set action = p.action | default('add') %}
+            {% set area = p.area_key %}
+            
+            {# STRICT CLAIMANT_ID USAGE #}
+            {% set claimant = (p.claimant_id | default(p.claimant | default('system'))) | string %}
+            
+            {% if area is none %}
+              {{ current }}
+            {% else %}
+              {% set ns = namespace(active={}) %}
+              {% for k, v in current.items() if k != '_global_' %}
+                {% set ns.active = dict(ns.active, **{k: v}) %}
+              {% endfor %}
+
+              {% set result = ns.active %}
+
+              {# ACTION: ADD / UPDATE / LOCK #}
+              {% if action in ['add', 'lock', 'override'] or action_type == 'light_override' %}
+                {% if action_type == 'light_override' and p.action_value == 'off' %}
+                  {# Override Kill logic #}
+                  {% set new_stk = ns.active.get(area, []) | rejectattr('type', 'eq', 'override') | rejectattr('claimant', 'eq', claimant) | list %}
+                  {% if new_stk | count > 0 %}
+                    {% set result = dict(ns.active, **{area: new_stk}) %}
+                  {% else %}
+                    {% set ns_res = namespace(final={}) %}
+                    {% for k, v in ns.active.items() if k != area %}
+                      {% set ns_res.final = dict(ns_res.final, **{k: v}) %}
+                    {% endfor %}
+                    {% set result = ns_res.final %}
+                  {% endif %}
+                {% else %}
+                  {% set is_override = (action_type == 'light_override' or action == 'override' or p.intent_type == 'override') %}
+                  {% set intent_type = 'override' if is_override else (p.intent_type | default('motion')) %}
+                  {% set priority = 2 if is_override else (p.priority | default(1) | int) %}
+                  
+                  {# LOCK PERSISTENCE LOGIC #}
+                  {% set current_stack = ns.active.get(area, []) %}
+                  {% set existing = current_stack | selectattr('claimant', 'eq', claimant) | first | default({}) %}
+                  {% set final_lock = (action == 'lock' or p.locked in ['true', true, 'on'] or existing.get('locked', false)) %}
+
+                  {# EXPIRY CALCULATIONS #}
+                  {% set expiry = (now() +  timedelta(seconds=150)).isoformat() %}
+                  {% set seconds = p.seconds | default(120) | int %} {# -2 means truly not provided #}
+                  
+                  {% if not final_lock %}
+                    {% if is_override %}
+                      {% if seconds != -1 %}
+                        {% set dur_work = g_env.get('override_duration_work', 36000) | int %}
+                        {% set dur_std = g_env.get('override_duration_standard', 3600) | int %}
+                        {% set is_work_area = ('work' in (labels(area) | default([], true))) %}
+                        {% set expiry = (now() + timedelta(seconds=(p.seconds | default(dur_work if is_work_area else dur_std) | int))).isoformat() %}
+                      {% else %}
+                        {% set expiry = 'none' %}
+                      {% endif %}
+                    {% else %}
+                      {# Motion/Door logic #}
+                      {% set final_seconds = seconds if seconds >= 0 else 120 %}
+                      {% if seconds != -1 %}
+                        {% set expiry = (now() + timedelta(seconds=final_seconds)).isoformat() %}
+                      {% else %}
+                        {% set expiry = 'none' %}
+                      {% endif %}
+                    {% endif %}
+                  {% endif %}
+                  
+                  {% set entry = {
+                    'type': intent_type,
+                    'claimant': claimant,
+                    'priority': priority,
+                    'expiry': expiry,
+                    'locked': final_lock,
+                    'action_value': p.action_value | default('manual' if is_override else ''),
+                    'warned': false,
+                    'skip_warning': (p.skip_warning in ['true', true] or intent_type != 'motion' or final_lock)
+                  } %}
+                  {% set others = current_stack | rejectattr('claimant', 'eq', claimant) | list %}
+                  {% set result = dict(ns.active, **{area: others + [entry]}) %}
+                {% endif %}
+
+              {# ACTION: WARNED #}
+              {% elif action == 'warned' and area in ns.active %}
+                {% set ns_stk = namespace(stk=[]) %}
+                {% for i in ns.active[area] %}
+                  {% set ns_stk.stk = ns_stk.stk + [dict(i, warned=true, expiry=(now() + timedelta(seconds=20)).isoformat()) if i.claimant == claimant else i] %}
+                {% endfor %}
+                {% set result = dict(ns.active, **{area: ns_stk.stk}) %}
+
+              {# ACTION: REMOVE #}
+              {% elif action == 'remove' and area in ns.active %}
+                {% set new_stk = ns.active[area] | rejectattr('claimant', 'eq', claimant) | list %}
+                {% if new_stk | count > 0 %}
+                  {% set result = dict(ns.active, **{area: new_stk}) %}
+                {% else %}
+                  {% set ns_rem = namespace(final={}) %}
+                  {% for k, v in ns.active.items() if k != area %}
+                    {% set ns_rem.final = dict(ns_rem.final, **{k: v}) %}
+                  {% endfor %}
+                  {% set result = ns_rem.final %}
+                {% endif %}
+              {% endif %}
+
+              {# Final Output Injection #}
+              {% set ns_final = namespace(out={}) %}
+              {% for k, v in result.items() if v | count > 0 %}
+                {% set ns_final.out = dict(ns_final.out, **{k: v}) %}
+              {% endfor %}
+              {{ ns_final.out if ns_final.out | count > 0 else placeholder }}
+            {% endif %}
+          {% endif %}
         {% endif %}

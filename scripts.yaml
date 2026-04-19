@@ -1068,7 +1068,7 @@ scene_snapshot:
     target_posture:
       selector:
         text:
-      default: Default
+      default: default
       name: Target Posture
       description: Leave 'Default' for base scenes, or enter a posture slug (e.g.,
         'night').

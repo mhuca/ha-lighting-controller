@@ -3,6 +3,7 @@ sensor:
     unique_id: active_sensor_monitor_master_001
     state: >
       {% set entities = label_entities('presence') + 
+                        label_entities('person') + 
                         label_entities('occupancy') + 
                         label_entities('door') %}
 
@@ -12,9 +13,39 @@ sensor:
         | sort(attribute='last_changed') 
         | map(attribute='entity_id') | list %}
 
-      {% if active | count > 0 %}
-        {% set lead = active | last %}
-        {{ lead }}@{{ states[lead].last_changed }}
+      {# 1. Get the list of entity IDs that are currently in 'presence' state #}
+      {% set active_presence_entities = states.select 
+        | selectattr('state', 'eq', 'presence') 
+        | map(attribute='entity_id') 
+        | list %}
+
+      {# 2. Map those to a list of unique Area IDs #}
+      {% set active_areas = active_presence_entities 
+        | map('area_id') 
+        | reject('none') 
+        | unique 
+        | list %}
+
+      {% set ns = namespace(items=[]) %}
+      {% for area in active_areas  %}
+        {% set ns.items = ns.items + (area_entities(area)
+        | select('match', 'binary.*') 
+        | intersect(active)
+        | list)  %}
+      {% endfor %}
+
+      {% set filtered_active = ns.items 
+        | expand
+        | selectattr('state', 'in', ['on', 'off', 'open', 'closed']) 
+        | sort(attribute='last_changed') 
+        | map(attribute='entity_id') 
+        | list
+        %}
+
+
+      {% if filtered_active | count > 0 %}
+        {% set lead = filtered_active | last %}
+        {{ lead }}@{{ states[lead].last_changed }}@{{states[lead].state}}
       {% else %}
         none
       {% endif %}

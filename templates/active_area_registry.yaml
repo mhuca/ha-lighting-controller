@@ -3,6 +3,12 @@ trigger:
     event_type: universal_controller_command
     event_data:
       action_type: light_override
+  - trigger: mqtt
+    id: MQTT_Message
+    options:
+      topic: home/universal/bus
+      payload: light_override
+      value_template: "{{ value_json.action_type }}"
 sensor:
   - name: "Active Area Overrides"
     unique_id: active_area_overrides
@@ -12,9 +18,10 @@ sensor:
       {{ state_attr('sensor.active_area_overrides', 'overridden_areas') | count if state_attr('sensor.active_area_overrides', 'overridden_areas') else 0 }}
     attributes:
       overridden_areas: >
+        {% set payload = (trigger.payload | from_json ) if trigger.id == 'MQTT_Message' else trigger.event.data %}
         {% set current = state_attr('sensor.active_area_overrides', 'overridden_areas') or [] %}
-        {% set area = trigger.event.data.area_key %}
-        {% set cmd = trigger.event.data.command_input | default(none) %}
+        {% set area = payload.area_key %}
+        {% set cmd = payload.action_value | default(none) %}
 
         {% if cmd is not none %}
           {% if cmd == 'on' %}
@@ -30,9 +37,10 @@ sensor:
         {% endif %}
 
       override_expiry: >
+        {% set payload = (trigger.payload | from_json ) if trigger.id == 'MQTT_Message' else trigger.event.data %}
         {% set current = state_attr('sensor.active_area_overrides', 'override_expiry') or {} %}
-        {% set area_key = trigger.event.data.area_key %}
-        {% set cmd = trigger.event.data.command_input | replace('turn_', '') %}
+        {% set area_key = payload.area_key %}
+        {% set cmd = payload.action_value | replace('turn_', '') %}
         {% set duration = (2 * 3600) | int %}
 
         {% if cmd == 'on' %}
