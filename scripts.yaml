@@ -1031,6 +1031,7 @@ scene_snapshot:
       sequence_weight: '{{ sequence_weight }}'
       linked_areas: '{{ linked_areas }}'
       target_posture: '{{ target_posture }}'
+    enabled: false
   - action: logbook.log
     alias: Surgical Activity Log
     metadata: {}
@@ -1040,6 +1041,7 @@ scene_snapshot:
         (Weight: {{ sequence_weight }}). \nPosture: {{ target_posture }}.\n{% if linked_areas|length
         > 0 %}\nLinks: {{ linked_areas | join(', ') }}\n{% endif %}\n"
       name: Matrix Engine
+    enabled: false
   fields:
     area_id:
       name: Target Area
@@ -1067,8 +1069,272 @@ scene_snapshot:
       description: Select the Areas To Be Linked
     target_posture:
       selector:
-        text:
+        select:
+          options:
+          - default
+          - night
+          - away
       default: default
+    labels:
+      selector:
+        select:
+          multiple: true
+          options:
+          - wall_down
+          - wall_up
+          - presence
+          - main
+          - wall
+          - accent
+          - lamp
+          - back
+          - front
+          - lights_off
+          - light_schedule
+scene_snapshot_differential_v1:
+  sequence:
+  - event: capture_new_scene
+    event_data:
+      area_id: '{{ area_id }}'
+      scene_name: '{{ scene_name }}'
+      sequence_weight: '{{ sequence_weight }}'
+      linked_areas: '{{ linked_areas }}'
+      target_posture: '{{ target_posture }}'
+    enabled: false
+  - action: logbook.log
+    alias: Surgical Activity Log
+    metadata: {}
+    data:
+      entity_id: sensor.ucc_registry_log
+      message: "SNAPSHOT: Area [{{ area_id }}] updated. \nScene: \"{{ scene_name }}\"
+        (Weight: {{ sequence_weight }}). \nPosture: {{ target_posture }}.\n{% if linked_areas|length
+        > 0 %}\nLinks: {{ linked_areas | join(', ') }}\n{% endif %}\n"
+      name: Matrix Engine
+    enabled: false
+  alias: Scene Snapshot (Differential V1)
+  description: '# SCENE SNAPSHOT TOOL (V2.2)
+
+
+    ### 1. CORE PURPOSE Captures current lighting states and linked area states
+
+    into the **Matrix Scratchpad**.  Allows for the creation of base scenes or
+
+    specific posture overlays (e.g., Night).
+
+
+    ### 2. OPERATING MODES * **Base Capture**: Leave `Target Posture` as
+
+    "Default". Updates the standard scene levels. * **Posture Overlay**: Enter a
+
+    slug like `night`. Only updates the overlay levels, preserving the base scene.
+
+    * **Link Capture**: Select multiple areas to define which rooms should follow
+
+    this area''s state change.
+
+
+    ### 3. OPERATIONAL NOTES * **Weight 0 (Off)**: Use this to specifically fix
+
+    missing "Off" links. Capture a scene with weight `0` and name `off`. *
+
+    **Committing**: Captured data is held in volatile memory (Scratchpad). You
+
+    **must** trigger the "Commit" node in Node-RED to save to disk.
+
+    '
+  fields:
+    area_id:
+      name: Target Area
+      required: true
+      selector:
+        area:
+      description: Select the Area you are capturing a Scene
+    scene_name:
+      selector:
+        text:
+      name: Scene Name
+      required: true
+    labels:
+      selector:
+        select:
+          multiple: true
+          options:
+          - main
+          - lamp
+          - front
+          - back
+          - wall
+          - wall_down
+          - wall_up
+          - accent
+      default:
+      - main
+      - front
+      - lamp
+    linked_areas:
+      name: Linked Areas
+      required: false
+      selector:
+        area:
+          multiple: true
+      description: Select the Areas To Be Linked
+    target_posture:
+      selector:
+        select:
+          options:
+          - default
+          - night
+      default: default
+scene_snapshot_differential_v2:
+  alias: Scene Snapshot (Differential V2)
+  description: '### 1. CORE PURPOSE
+
+    Captures current lighting states for the target area and all linked areas.
+
+
+    ### 2. UPDATES
+
+    * **Linked Brightness**: Now crawls ''linked_areas'' to capture their current
+    levels by label.
+
+    * **Slack Logic**: Data is sent raw; Node-RED handles the +-10% smoothing.
+
+    '
+  fields:
+    area_id:
+      name: Target Area
+      required: true
+      selector:
+        area:
+    scene_id:
+      selector:
+        text:
+      name: ID
+      description: Sequence Number of Scene
+      required: true
+    scene_name:
+      name: Scene Name
+      required: true
+      selector:
+        text:
+    labels:
+      name: Functional Labels
+      selector:
+        select:
+          multiple: true
+          options:
+          - main
+          - lamp
+          - front
+          - back
+          - wall
+          - wall_down
+          - wall_up
+          - accent
+      default:
+      - main
+      - front
+      - lamp
+    linked_areas:
+      name: Linked Areas
+      required: false
+      selector:
+        area:
+          multiple: true
+    linked_labels:
+      name: Linked Labels
+      description: Which functional layers should be captured and controlled in linked
+        areas?
+      required: false
+      selector:
+        select:
+          multiple: true
+          options:
+          - main
+          - lamp
+          - front
+          - back
+          - wall
+          - wall_down
+          - wall_up
+          - accent
+      default:
+      - main
+      - lamp
+    target_posture:
       name: Target Posture
-      description: Leave 'Default' for base scenes, or enter a posture slug (e.g.,
-        'night').
+      selector:
+        select:
+          options:
+          - default
+          - night
+      default: default
+  sequence:
+  - variables:
+      layers: "{% set ns = namespace(data={}) %} {% for l in labels %}\n  {% set ents
+        = label_entities(l) \n    | select('in', area_entities(area_id)) \n    | list
+        %}\n  {% set active = expand(ents) \n    | selectattr('state', 'eq', 'on')
+        \n    | first %}\n  {% set val = state_attr(active.entity_id, 'brightness')
+        \n    | int(0) if active else 0 %}\n  {% set ns.data = dict(ns.data, **{l:
+        val}) %}\n{% endfor %} \n\n{% set ts = now().isoformat() %}\n{% set ns.data
+        = dict(ns.data, **{'_updated': ts}) %}\n\n{{ ns.data }}"
+  - variables:
+      links:
+        areas: '{{ linked_areas if linked_areas is not none else [] }}'
+        labels: '{{ linked_labels if linked_labels is not none else [] }}'
+        snapshot: "{% set sn = namespace(data={}) %}\n\n{% set a_list = linked_areas
+          if linked_areas is not none else [] %}\n\n{% set l_list = linked_labels
+          if linked_labels is not none else [] %}\n\n{% for la in a_list %}\n\n  {%
+          set av = namespace(inner={}) %}\n  \n  {% for ll in l_list %}\n  \n    {%
+          set ents = label_entities(ll) \n      | select('in', area_entities(la))
+          \n      | list %}\n    \n    {% set active = expand(ents) \n      | selectattr('state',
+          'eq', 'on') \n      | first %}\n    {% set val = state_attr(active.entity_id,
+          'brightness') \n      | int(0) if active else 0 %}\n    {% set av.inner
+          = dict(av.inner, **{ll: val}) %}\n  {% endfor %}\n  {% set sn.data = dict(sn.data,
+          **{la: av.inner}) %}\n{% endfor %}\n{{ sn.data }}"
+  - event: capture_scene_diff
+    event_data:
+      area_id: '{{ area_id }}'
+      scene_slug: '{{ scene_name | slugify }}'
+      scene_id: '{{ scene_id | string  }}'
+      posture: '{{ target_posture }}'
+      layers: '{{ layers }}'
+      links: '{{ links }}'
+flat_test:
+  sequence:
+  - variables:
+      primary:
+        back': 0
+        front: 51
+        lamp: 0
+        main: 0
+        wall: 0
+        wall_down: 80
+        wall_up: 0
+      return: "{% set ns = namespace(indexed={}) %}\n{% for label, rawVal in primary.items()
+        %}\n  {% set level = (([0, [rawVal, 255]|min]|max) / 25.5) | round(0, 'floor')
+        | int %}\n  {% set levelKey = level | string %}\n  \n  {% set current_list
+        = ns.indexed.get(levelKey, []) %}\n  \n  {% set ns.indexed = dict(ns.indexed,
+        **{levelKey: current_list + [label]}) %}\n{% endfor %}\n{{ ns.indexed }}\n"
+  alias: flat test
+  description: ''
+test_zigbee_scene:
+  sequence:
+  - variables:
+      registry: '{{ state_attr(''sensor.global_variable_registry'', ''vars'') }}'
+      g_logic: '{{ registry.globals.logic_engines }}'
+      target_kelvin: '{{ states(g_logic.cct_calculation) | int(3200) }}'
+  - action: scene.turn_on
+    metadata: {}
+    data: {}
+    target:
+      entity_id: scene.living_room_20_movie_plus
+  - action: light.turn_on
+    metadata: {}
+    target:
+      entity_id: light.living_room
+    data: '{{ {''color_temp_kelvin'': target_kelvin} }}
+
+      '
+  alias: Test Zigbee Scene
+  description: ''
