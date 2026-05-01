@@ -2,46 +2,82 @@ sensor:
   - name: "Active Sensor Monitor Master"
     unique_id: active_sensor_monitor_master_001
     state: >
-      {% set entities = label_entities('presence') + 
-                        label_entities('person') + 
-                        label_entities('occupancy') + 
-                        label_entities('door') %}
-
-      {% set active = entities | unique 
-        | expand 
-        | selectattr('state', 'in', ['on', 'off', 'open', 'closed']) 
-        | sort(attribute='last_changed') 
-        | map(attribute='entity_id') | list %}
-
       {# 1. Get the list of entity IDs that are currently in 'presence' state #}
-      {% set active_presence_entities = states.select 
-        | selectattr('state', 'eq', 'presence') 
-        | map(attribute='entity_id') 
+      {% set active_presence_entities = states.select
+        | selectattr('state', 'eq', 'presence')
+        | map(attribute='entity_id')
         | list %}
 
       {# 2. Map those to a list of unique Area IDs #}
-      {% set active_areas = active_presence_entities 
-        | map('area_id') 
-        | reject('none') 
-        | unique 
+      {% set active_areas = active_presence_entities
+        | map('area_id')
+        | reject('none')
+        | unique
         | list %}
+
+
+      {% set motion_entities = label_entities('presence') +
+                                label_entities('person') +
+                                label_entities('occupancy') %}
+
+      {% set motion_active = motion_entities | unique
+        | expand
+        | selectattr('state', 'in', ['on', 'off', 'open', 'closed'])
+        | sort(attribute='last_changed')
+        | map(attribute='entity_id') | list %}
+
+
+      {% set door_entities = label_entities('door') %}
+
+      {% set door_active = door_entities | unique
+        | expand
+        | selectattr('state', 'in', ['on', 'off', 'open', 'closed'])
+        | sort(attribute='last_changed')
+        | map(attribute='entity_id') | list %}
+
+      {% set door_open = door_entities | unique
+        | expand
+        | selectattr('state', 'in', ['off', 'open'])
+        | sort(attribute='last_changed')
+        | map(attribute='entity_id') | list %}
 
       {% set ns = namespace(items=[]) %}
       {% for area in active_areas  %}
+        {% set is_door_open = (area_entities(area)
+          | select('match', 'binary.*')
+          | intersect(door_open)
+          | list 
+          | count ) > 0  %}
+        
+
+        {% set intent_sensor = 'sensor.' ~ area ~ '_presence_intent' %}
+        {% set intent_stack = state_attr(intent_sensor, 'intent_stack') | default([], true) %}
+        {% set is_blocked = intent_stack 
+            | selectattr('locked', 'defined')
+            | selectattr('locked', 'eq', true) | list | count > 0 
+            or intent_stack 
+            | selectattr('type', 'defined')
+            | selectattr('type', 'in', ['override', 'schedule']) | list | count > 0 
+        %}
+        {% if not is_blocked or is_door_open %}
+          {% set ns.items = ns.items + (area_entities(area)
+          | select('match', 'binary.*')
+          | intersect(motion_active)
+          | list)  %}
+        {% endif %}
         {% set ns.items = ns.items + (area_entities(area)
-        | select('match', 'binary.*') 
-        | intersect(active)
-        | list)  %}
+          | select('match', 'binary.*')
+          | intersect(door_active)
+          | list)  %}
       {% endfor %}
 
-      {% set filtered_active = ns.items 
+      {% set filtered_active = ns.items
         | expand
-        | selectattr('state', 'in', ['on', 'off', 'open', 'closed']) 
-        | sort(attribute='last_changed') 
-        | map(attribute='entity_id') 
+        | selectattr('state', 'in', ['on', 'off', 'open', 'closed'])
+        | sort(attribute='last_changed')
+        | map(attribute='entity_id')
         | list
         %}
-
 
       {% if filtered_active | count > 0 %}
         {% set lead = filtered_active | last %}
