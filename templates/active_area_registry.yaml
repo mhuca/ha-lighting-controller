@@ -5,10 +5,10 @@ trigger:
       action_type: light_override
   - trigger: mqtt
     id: MQTT_Message
-    options:
-      topic: home/universal/bus
-      payload: light_override
-      value_template: "{{ value_json.action_type }}"
+    # options:
+    topic: home/universal/bus
+    payload: light_override
+    value_template: "{{ value_json.action_type }}"
 sensor:
   - name: "Active Area Overrides"
     unique_id: active_area_overrides

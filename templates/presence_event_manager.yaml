@@ -1,0 +1,56 @@
+trigger:
+  - trigger: event
+    event_type: "presence_state_update"
+sensor:
+  - name: "Presence State Registry"
+    unique_id: presence_state_registry
+    state: >
+      {# The primary state counts areas actively pending a Janitor cleanup sweep #}
+      {% set areas = state_attr(this.entity_id, 'active_areas') or {} %}
+      {{ areas | length }}
+    unit_of_measurement: "areas"
+    icon: >
+      {% if states(this.entity_id) | int(0) > 0 %}
+        mdi:home-floor-g
+      {% else %}
+        mdi:home-outline
+      {% endif %}
+    attributes:
+      active_areas: >
+        {# 1. Initialize Current Registry State #}
+        {% set current = state_attr(this.entity_id, 'active_areas') or {} %}
+
+        {# 2. Extract Event Context #}
+        {% set target_area = trigger.event.data.area_id | default('unknown') %}
+        {% set new_state = trigger.event.data.state | default('EVICTED') %}
+        {% set claimant = trigger.event.data.last_claimant | default('system') %}
+        {% set intent_type = trigger.event.data.last_intent_type | default('motion') %}
+        {% set ttl = trigger.event.data.expiry_ttl | default(0) | float %}
+        {% set now_ts = as_timestamp(now()) | round(3) %}
+
+        {# 3. Standardized Cache Lifecycle Contract #}
+        {% if new_state == 'COOLDOWN' and target_area != 'unknown' %}
+          {# --- THE MERGE PATH --- #}
+          {# Area has entered a transient cooldown phase. Track it with a strict numeric expiration #}
+          {% set expiry_ts = (now_ts + ttl) | round(3) if ttl > 0 else none %}
+          
+          {% set update = {
+            target_area: {
+              'state': 'COOLDOWN',
+              'last_claimant': claimant,
+              'last_intent_type': intent_type,
+              'last_updated': now_ts,
+              'expiry': expiry_ts
+            }
+          } %}
+          {{ dict(current, **update) }}
+
+        {% else %}
+          {# --- THE EVICTION PATH (ACTIVE, EVICTED, unknown, unavailable) --- #}
+          {# If the area becomes ACTIVE (in use) or EVICTED (done), scrub it from the Janitor's book instantly #}
+          {% set ns = namespace(output={}) %}
+          {% for area, data in current.items() if area != target_area %}
+            {% set ns.output = dict(ns.output, **{area: data}) %}
+          {% endfor %}
+          {{ ns.output }}
+        {% endif %}

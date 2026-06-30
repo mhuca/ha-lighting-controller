@@ -1,12 +1,12 @@
 trigger:
   - trigger: event
-    event_type: "lutron_button_event"
+    event_type: "device_lock_claim"
 
 sensor:
-  - name: "Pico Registry"
-    unique_id: pico_registry
+  - name: "Device Lock Registry"
+    unique_id: device_lock_registry
     state: >
-      {% set sessions = state_attr('sensor.pico_registry', 'active_sessions') %}
+      {% set sessions = state_attr('sensor.device_lock_registry', 'active_sessions') %}
       {% if sessions is mapping %}
         {{ sessions | length }}
       {% else %}
@@ -14,7 +14,7 @@ sensor:
       {% endif %}
     unit_of_measurement: "sessions"
     icon: >
-      {% if states('sensor.pico_registry') | int(0) > 0 %}
+      {% if states('sensor.device_lock_registry') | int(0) > 0 %}
         mdi:remote-desktop
       {% else %}
         mdi:remote-off
@@ -22,10 +22,10 @@ sensor:
     attributes:
       active_sessions: >
         {# 1. Initialize State #}
-        {% set current = state_attr('sensor.pico_registry', 'active_sessions') or {} %}
+        {% set current = state_attr('sensor.device_lock_registry', 'active_sessions') or {} %}
         {% set device_id = trigger.event.data.device_id | default('unknown') %}
-        
-        {# 2. Establish "The Truth" (Using the Event's specific timestamp) #}
+
+        {# 2. Establish "The Truth" #}
         {% set event_ts = trigger.event.data.owned_ts | default(as_timestamp(trigger.event.time_fired)) | round(3) %}
         {% set now_ts = as_timestamp(now()) | round(3) %}
         {% set is_incoming_claim = trigger.event.data.isOwned | bool(false) %}
@@ -43,15 +43,17 @@ sensor:
           {# --- THE LOCK PATH --- #}
           {% set existing = ns.clean.get(device_id, {}) %}
           {% set is_owned = existing.isOwned | default(false) %}
-          {# A lock is available if it's not owned OR if the existing lock is older than our new event #}
           {% set can_take_lock = not is_owned or (event_ts > existing.ts | default(0)) %}
 
           {% if can_take_lock %}
+            {# EXTRACT DYNAMIC TTL: Default to 10.0 seconds if attribute is omitted #}
+            {% set ttl = trigger.event.data.expiry_ttl | default(10.0) | float %}
+            
             {% set new_lock = { 
               device_id: {
                 'isOwned': true, 
                 'ts': event_ts, 
-                'expiry': (event_ts + 10) | round(3)
+                'expiry': (event_ts + ttl) | round(3)
               } 
             } %}
             {{ dict(ns.clean, **new_lock) }}
@@ -71,8 +73,61 @@ sensor:
             {% endfor %}
             {{ ns_final.output }}
           {% else %}
-            {# Stale release signal detected; ignore it to protect newer active session #}
             {{ ns.clean }}
           {% endif %}
         {% endif %}
+      # active_sessions: >
+      #   {# 1. Initialize State #}
+      #   {% set current = state_attr('sensor.pico_registry', 'active_sessions') or {} %}
+      #   {% set device_id = trigger.event.data.device_id | default('unknown') %}
 
+      #   {# 2. Establish "The Truth" (Using the Event's specific timestamp) #}
+      #   {% set event_ts = trigger.event.data.owned_ts | default(as_timestamp(trigger.event.time_fired)) | round(3) %}
+      #   {% set now_ts = as_timestamp(now()) | round(3) %}
+      #   {% set is_incoming_claim = trigger.event.data.isOwned | bool(false) %}
+
+      #   {# 3. Global Purge (Clean the house of any naturally expired locks) #}
+      #   {% set ns = namespace(clean={}) %}
+      #   {% for s_id, data in current.items() %}
+      #     {% if event_ts < (data.expiry | default(0)) %}
+      #       {% set ns.clean = dict(ns.clean, **{s_id: data}) %}
+      #     {% endif %}
+      #   {% endfor %}
+
+      #   {# 4. Logic Execution Path #}
+      #   {% if is_incoming_claim %}
+      #     {# --- THE LOCK PATH --- #}
+      #     {% set existing = ns.clean.get(device_id, {}) %}
+      #     {% set is_owned = existing.isOwned | default(false) %}
+      #     {# A lock is available if it's not owned OR if the existing lock is older than our new event #}
+      #     {% set can_take_lock = not is_owned or (event_ts > existing.ts | default(0)) %}
+
+      #     {% if can_take_lock %}
+      #       {% set new_lock = {
+      #         device_id: {
+      #           'isOwned': true,
+      #           'ts': event_ts,
+      #           'expiry': (event_ts + 10) | round(3)
+      #         }
+      #       } %}
+      #       {{ dict(ns.clean, **new_lock) }}
+      #     {% else %}
+      #       {{ ns.clean }}
+      #     {% endif %}
+
+      #   {% else %}
+      #     {# --- THE RELEASE PATH --- #}
+      #     {% set existing = ns.clean.get(device_id, {}) %}
+
+      #     {# Only release if this signal is actually from the same time or newer than the active lock #}
+      #     {% if event_ts >= (existing.ts | default(0)) %}
+      #       {% set ns_final = namespace(output={}) %}
+      #       {% for s_id, data in ns.clean.items() if s_id != device_id %}
+      #         {% set ns_final.output = dict(ns_final.output, **{s_id: data}) %}
+      #       {% endfor %}
+      #       {{ ns_final.output }}
+      #     {% else %}
+      #       {# Stale release signal detected; ignore it to protect newer active session #}
+      #       {{ ns.clean }}
+      #     {% endif %}
+      #   {% endif %}

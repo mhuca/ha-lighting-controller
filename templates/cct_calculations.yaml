@@ -2,7 +2,7 @@ sensor:
   - name: "CCT Logic Core"
     unique_id: cct_logic_core
     unit_of_measurement: "K"
-    state: |
+    state: |-
       {# 1. Load Registry and extract pointers #}
       {% set registry = state_attr('sensor.global_variable_registry', 'vars') %}
 

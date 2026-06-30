@@ -1338,3 +1338,827 @@ test_zigbee_scene:
       '
   alias: Test Zigbee Scene
   description: ''
+configure_defaults:
+  sequence:
+  - variables:
+      payload: '{{ trigger }}'
+  fields:
+    scene_eligible_label:
+      selector:
+        target: {}
+      default:
+        label_id: scene_eligible
+      name: Scene Eligible Label
+      description: Select the Label used to identify Areas that use Scenes
+    light schedule_label:
+      selector:
+        target: {}
+      default:
+        label_id: light_schedule
+      name: Light Schedule Label
+      description: Select the Label used to identify Lighting Schedule for an Area
+  alias: Configure Defaults
+  description: ''
+system_area_profile_configuration_engine:
+  alias: 'Profile Admin: Lighting Policy'
+  description: Manages the policy_map block inside an Area Profile
+  icon: mdi:lightbulb-cog
+  fields:
+    action_type:
+      name: Operation
+      required: true
+      selector:
+        select:
+          options:
+          - label: Write/Update Policy
+            value: update
+          - label: Purge Policy
+            value: delete
+          - label: Initialise
+            value: init
+    target_area:
+      name: Target Area
+      required: true
+      selector:
+        area: {}
+    target_posture:
+      name: Target Posture
+      description: The house posture phase to configure.
+      required: true
+      selector:
+        select:
+          options:
+          - morning
+          - daylight
+          - evening
+          - night
+          - idle
+          multiple: true
+    target_behavior:
+      name: Target Behavior
+      description: The lighting behavior applied during this posture.
+      required: false
+      selector:
+        select:
+          options:
+          - presence
+          - 'on'
+          - 'off'
+  sequence:
+  - variables:
+      area_list: '{{ [target_area] if action_type != ''init'' else  areas() }}'
+  - repeat:
+      for_each: '{{ area_list }}'
+      sequence:
+      - event: area_profile_modify_intent
+        event_data:
+          action: '{{ action_type }}'
+          area: '{{ repeat.item }}'
+          namespace: policy_map
+          key: '{{ target_posture }}'
+          value: '{{ target_behavior if action_type == ''update'' else ''none'' }}'
+profile_admin_environmental_config:
+  alias: 'Profile Admin: Environmental Config'
+  description: Manages the environmental_config block inside an Area Profile
+  icon: mdi:thermostat-cog
+  fields:
+    action_type:
+      name: Operation
+      required: true
+      selector:
+        select:
+          options:
+          - label: Write/Update Threshold
+            value: update
+          - label: Purge Threshold
+            value: delete
+    target_area:
+      name: Target Area
+      required: true
+      selector:
+        area: {}
+    target_key:
+      name: Configuration Parameter
+      required: true
+      selector:
+        select:
+          options:
+          - label: Lux Operational Threshold
+            value: lux_threshold
+          - label: Climate Temperature Offset
+            value: target_temperature_offset
+    target_value:
+      name: Numeric Value
+      description: The numeric value to assign (e.g., lux limit or temperature degrees).
+      required: false
+      selector:
+        number:
+          min: -10
+          max: 1000
+          step: 0.5
+          mode: box
+  sequence:
+  - event: area_profile_modify_intent
+    event_data:
+      action: '{{ action_type }}'
+      area: '{{ target_area }}'
+      namespace: environmental_config
+      key: '{{ target_key }}'
+      value: '{{ target_value if action_type == ''update'' else ''none'' }}'
+profile_admin_media_orchestration:
+  alias: 'Profile Admin: Media Orchestration'
+  description: Manages the media_orchestration block inside an Area Profile
+  icon: mdi:audio-video
+  fields:
+    action_type:
+      name: Operation
+      required: true
+      selector:
+        select:
+          options:
+          - label: Write/Update Media Rule
+            value: update
+          - label: Purge Media Rule
+            value: delete
+    target_area:
+      name: Target Area
+      required: true
+      selector:
+        area: {}
+    target_key:
+      name: Media Parameter
+      required: true
+      selector:
+        select:
+          options:
+          - label: Default Audio Zone
+            value: default_audio_zone
+          - label: Startup Audio Volume
+            value: startup_volume
+    target_media_player:
+      name: Target Media Player Entity
+      description: Select the physical media output zone (Required if setting Default
+        Audio Zone).
+      required: false
+      selector:
+        entity:
+          filter:
+            domain: media_player
+    target_volume:
+      name: Startup Volume Level
+      description: The initial slider volume (Required if setting Startup Audio Volume).
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 1
+          step: 0.05
+          mode: slider
+  sequence:
+  - event: area_profile_modify_intent
+    event_data:
+      action: '{{ action_type }}'
+      area: '{{ target_area }}'
+      namespace: media_orchestration
+      key: '{{ target_key }}'
+      value: "{% if action_type == 'delete' %}\n  none\n{% elif target_key == 'default_audio_zone'
+        %}\n  {{ target_media_player }}\n{% else %}\n  {{ target_volume }}\n{% endif
+        %}"
+temp_profile_generator:
+  alias: Temp Profile Generator
+  description: Universal Matrix Node Discovery Generator (History Aware)
+  sequence:
+  - repeat:
+      for_each: '{{ areas() }}'
+      sequence:
+      - variables:
+          target_area: '{{ repeat.item }}'
+          displayName: '{{ area_name(target_area) | default(target_area | replace(''_'',
+            '' '') | title) }}'
+          discoveryPrefix: homeassistant
+          deviceObj:
+            identifiers:
+            - matrix_area_{{ target_area }}
+            name: '{{ displayName }} Matrix'
+            model: Universal Matrix Node
+            manufacturer: Pico Cartographer
+            suggested_area: '{{ displayName }}'
+          adminDeviceObj:
+            identifiers:
+            - profile_admin_{{ target_area }}
+            name: Profile Admin {{ displayName }}
+            model: Universal Matrix Node
+            manufacturer: Pico Cartographer
+            suggested_area: '{{ displayName }}'
+      - variables:
+          appId: profile
+          topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{ appId }}/config'
+          payload:
+            name: Area Profile
+            unique_id: '{{ target_area }}_matrix_profile_unique'
+            default_entity_id: sensor.{{ target_area }}_profile
+            state_topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{ appId
+              }}/state'
+            value_template: '{% raw %}{{ value }}{% endraw %}'
+            json_attributes_topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{
+              appId }}/attributes'
+            json_attributes_template: '{% raw %}{{ value_json | tojson }}{% endraw
+              %}'
+            icon: mdi:card-account-details-star
+            device: '{{ deviceObj }}'
+        alias: Area Profile Definition
+      - variables:
+          appId: profile_admin
+          postures:
+          - morning
+          - daylight
+          - evening
+          - night
+        alias: Generate Native MQTT UI Selectors
+      - action: mqtt.publish
+        data:
+          topic: homeassistant/select/{{ target_area }}/policy_idle/config
+        enabled: false
+      - repeat:
+          for_each: '{{ postures }}'
+          sequence:
+          - action: mqtt.publish
+            data:
+              topic: homeassistant/select/{{ target_area }}/policy_{{ repeat.item
+                }}/config
+        enabled: true
+  mode: single
+system_update_area_sub_zone_layout:
+  alias: System - Update Area Sub-Zone Layout
+  description: Declaratively updates an area's features and sub-zone eligibility via
+    fields.
+  fields:
+    target_area:
+      name: Target Area
+      description: Select the area profile you want to update.
+      required: true
+      selector:
+        area: {}
+    sub_zones:
+      name: Eligible Sub Zones
+      description: Select all sub-zones that are active in this space.
+      required: false
+      default: []
+      selector:
+        select:
+          multiple: true
+          options:
+          - label: Counter
+            value: counter
+          - label: Island
+            value: island
+          - label: Table
+            value: table
+  sequence:
+  - variables:
+      profile_sensor: sensor.{{ target_area }}_profile
+      current_features: '{{ state_attr(profile_sensor, ''features'') | default({},
+        true) }}'
+      updated_features: '{{ dict(current_features, **{''sub_zones_eligible'': sub_zones})
+        }}'
+      compiled_profile: "{{ {\n  'area_id': target_area,\n  'policy_map': state_attr(profile_sensor,
+        'policy_map') | default({}, true),\n  'sub_zones': state_attr(profile_sensor,
+        'sub_zones') | default({}, true),\n  'features': updated_features,\n  'topography':
+        state_attr(profile_sensor, 'topography') | default({}, true)\n} }}"
+  - action: mqtt.publish
+    data:
+      topic: homeassistant/sensor/{{ target_area }}/profile/attributes
+      payload: '{{ compiled_profile | to_json }}'
+      retain: true
+  - action: mqtt.publish
+    data:
+      topic: homeassistant/sensor/{{ target_area }}/profile/state
+      payload: '{{ now().isoformat() }}'
+      retain: true
+  - action: script.system_update_area_sub_zone_layout_2
+    metadata: {}
+    data:
+      target_area: '{{ target_area }}'
+      target_sub_zone: counter
+      target_posture: daylight
+      assigned_policy: presence
+system_update_area_sub_zone_layout_2:
+  alias: System - Tune Sub-Zone Policy
+  description: Declaratively updates sub-zone eligibility and maps sparse policy overrides.
+  fields:
+    target_area:
+      name: Target Area
+      required: true
+      selector:
+        area: {}
+    target_sub_zone:
+      name: Sub-Zone to Tune
+      required: true
+      default: '{{ sub_zones[0] if sub_zones is defined and sub_zones | length > 0
+        else none }}'
+      selector:
+        select:
+          options:
+          - counter
+          - island
+          - table
+    target_posture:
+      name: Target Posture
+      description: Which posture does this override apply to?
+      required: false
+      selector:
+        select:
+          options:
+          - morning
+          - daylight
+          - evening
+          - night
+      default: daylight
+    assigned_policy:
+      name: Assigned Policy Override
+      description: Select the policy behavior for this sub-zone during the chosen
+        posture.
+      required: false
+      selector:
+        select:
+          options:
+          - label: None (Follow Backstop)
+            value: none
+          - label: Presence
+            value: presence
+          - label: 'On'
+            value: 'on'
+          - label: 'Off'
+            value: 'off'
+      default: none
+  sequence:
+  - variables:
+      profile_sensor: sensor.{{ target_area }}_profile
+      zone_key: '{{ target_sub_zone | string | lower }}'
+      posture_key: '{{ target_posture | string | lower }}'
+      policy_val: '{{ assigned_policy | string | lower }}'
+      current_sub_zones: '{{ state_attr(profile_sensor, ''sub_zones'') | default({},
+        true) }}'
+      has_valid_input: '{{ zone_key not in [''none'', ''''] and posture_key not in
+        [''none'', ''''] }}'
+      updated_sub_zones: "{% if not has_valid_input %}\n  {{ current_sub_zones }}\n{%
+        else %}\n  {% set zone_data = current_sub_zones.get(zone_key, {}) %}\n  {%
+        set p_map = zone_data.get('policy_map', {}) %}\n  \n  {# Rebuild the policy
+        map, dropping or adding keys using a native loop #}\n  {% set ns_p = namespace(map={})
+        %}\n  {% for pk, pv in p_map.items() if pk != posture_key %}\n    {% set ns_p.map
+        = dict(ns_p.map, **{pk: pv}) %}\n  {% endfor %}\n  {% if policy_val != 'none'
+        %}\n    {% set ns_p.map = dict(ns_p.map, **{posture_key: policy_val}) %}\n
+        \ {% endif %}\n  \n  {# Rebuild the master sub_zones dictionary #}\n  {% set
+        ns_z = namespace(zones={}) %}\n  {% for zk, zv in current_sub_zones.items()
+        if zk != zone_key %}\n    {% set ns_z.zones = dict(ns_z.zones, **{zk: zv})
+        %}\n  {% endfor %}\n  \n  {# Only re-inject the zone if its policy map has
+        remaining active elements #}\n  {% if ns_p.map | length > 0 %}\n    {% set
+        ns_z.zones = dict(ns_z.zones, **{zone_key: {'policy_map': ns_p.map}}) %}\n
+        \ {% endif %}\n  \n  {{ ns_z.zones }}\n{% endif %}"
+      compiled_profile: "{{ {\n  'area_id': target_area,\n  'policy_map': state_attr(profile_sensor,
+        'policy_map') | default({}, true),\n  'sub_zones': updated_sub_zones,\n  'features':
+        state_attr(profile_sensor, 'features') | default({}, true),\n  'topography':
+        state_attr(profile_sensor, 'topography') | default({}, true)\n} }}"
+  - action: mqtt.publish
+    data:
+      topic: homeassistant/sensor/{{ target_area }}/profile/attributes
+      payload: '{{ compiled_profile | to_json }}'
+      retain: true
+  - action: mqtt.publish
+    data:
+      topic: homeassistant/sensor/{{ target_area }}/profile/state
+      payload: '{{ now().isoformat() }}'
+      retain: true
+discovery_v5_5:
+  sequence:
+  - repeat:
+      for_each: '{{ areas() }}'
+      sequence:
+      - variables:
+          target_area: '{{ repeat.item }}'
+          displayName: '{{ area_name(target_area) | default(target_area | replace(''_'',
+            '' '') | title) }}'
+          discoveryPrefix: homeassistant
+          deviceObj:
+            identifiers:
+            - matrix_area_{{ target_area }}
+            name: '{{ displayName }} Matrix'
+            model: Universal Matrix Node
+            manufacturer: Pico Cartographer
+            suggested_area: '{{ displayName }}'
+      - variables:
+          appId: presence
+          topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{ appId }}/config'
+          payload:
+            name: Presence Registry
+            unique_id: '{{ target_area }}_presence_registry_unique'
+            default_entity_id: sensor.{{ target_area }}_presence_intent
+            state_topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{ appId
+              }}/state'
+            value_template: "{% raw %}\n  {# 1. Direct attribute access is faster
+              and cleaner #}\n  {% set expiry = this.attributes.get('expiry') %}\n
+              \ {% set stack_count = this.attributes.get('intent_stack', []) | count
+              %}\n  {% set winner = this.attributes.get('intent_stack', []) | sort(attribute='priority',
+              reverse=true) |\n  sort(attribute='locked', reverse=true) | first |
+              default({}) %}\n\n  {% if stack_count == 0 %}\n    idle\n  {% elif winner.get('locked',
+              false) %}\n    locked\n  {% elif expiry is none or expiry == 'none'
+              %}\n    {# Locked or infinite intents are always active #}\n    active\n
+              \ {% else %}\n    {% set t_diff = as_timestamp(expiry) - as_timestamp(now())
+              %}\n    {% if t_diff <= 0 %}\n      expired\n    {% elif t_diff <= 120
+              %}\n      {# The 'Warning Track' state #}\n      expiring\n    {% else
+              %}\n      active\n    {% endif %}\n  {% endif %}\n{% endraw %}"
+            json_attributes_topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{
+              appId }}/attributes'
+            json_attributes_template: '{% raw %}{{ value_json | tojson }}{% endraw
+              %}'
+            icon: mdi:database-sync
+            device: '{{ deviceObj }}'
+        alias: Presence Definition
+      - action: mqtt.publish
+        data:
+          topic: '{{ topic }}'
+          payload: '{{ payload | tojson }}'
+          retain: true
+      - variables:
+          appId: scene_config
+          topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{ appId }}/config'
+          payload:
+            name: Scene Config
+            unique_id: matrix_{{ target_area }}_{{ appId }}
+            default_entity_id: sensor.{{ target_area }}_matrix_{{ appId }}
+            state_topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{ appId
+              }}/attributes'
+            value_template: '{% raw %}{{ value_json.last_processed | default(now().isoformat())
+              }}{% endraw %}'
+            json_attributes_topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{
+              appId }}/attributes'
+            json_attributes_template: '{% raw %}{{ value_json | tojson }}{% endraw
+              %}'
+            device: '{{ deviceObj }}'
+            icon: mdi:cog
+        alias: Config Definition
+        enabled: false
+      - action: mqtt.publish
+        data:
+          topic: '{{ topic }}'
+          payload: '{{ payload | tojson }}'
+          retain: true
+        enabled: false
+      - variables:
+          appId: previous_scene
+          topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{ appId }}/config'
+          payload:
+            name: Previous Scene
+            unique_id: matrix_{{ target_area }}_{{ appId }}
+            default_entity_id: sensor.{{ target_area }}_matrix_{{ appId }}
+            state_topic: '{{ discoveryPrefix }}/select/{{ target_area }}/scene/attributes'
+            value_template: '{% raw %} {% set hist = value_json.history_stack | default([],
+              true) %} {{ hist[-2] if hist | count > 1 else ''0: Off'' }} {% endraw
+              %}
+
+              '
+            json_attributes_topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{
+              appId }}/state'
+            json_attributes_template: '{% raw %}{{ value_json | tojson }}{% endraw
+              %}'
+            device: '{{ deviceObj }}'
+            icon: mdi:history
+        alias: Previous Scene Definition
+        enabled: false
+      - action: mqtt.publish
+        data:
+          topic: '{{ topic }}'
+          payload: '{{ payload | tojson }}'
+          retain: true
+        enabled: false
+      - variables:
+          appId: posture
+          topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{ appId }}/config'
+          payload:
+            name: Posture
+            unique_id: matrix_{{ target_area }}_{{ appId }}
+            default_entity_id: sensor.{{ target_area }}_matrix_{{ appId }}
+            state_topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/scene_config/attributes'
+            value_template: '{% raw %}{{ value_json.active_posture | default(''default'')
+              }}{% endraw %}'
+            device: '{{ deviceObj }}'
+            icon: mdi:alarm-panel
+        alias: Posture Definition
+        enabled: false
+      - action: mqtt.publish
+        data:
+          topic: '{{ topic }}'
+          payload: '{{ payload | tojson }}'
+          retain: true
+        enabled: false
+      - variables:
+          appId: scene
+          scene_options: "{% set opt = state_attr('sensor.' ~ target_area ~\n'_matrix_scene_config',
+            'options') %} \n{{ opt if opt is list and opt | count > 0 else ['0: off']
+            }}"
+          zb_options: "{% set ns = namespace(found=[]) %}\n{%- set prefix = 'scene.'
+            ~ target_area ~ '_' %}\n\n{%- for s in states.scene \n   | selectattr('entity_id',
+            'search', '^' ~ prefix ~ '[0-9]*0_') -%}\n  \n  {%- set suffix = s.entity_id
+            | replace(prefix, '', 1) -%}\n  {%- set parts = suffix.split('_') -%}\n
+            \ \n  {%- set scene_id = parts[0] -%}\n  {%- set scene_name = parts[1:]
+            | join(' ') | title -%}\n  \n  {%- set ns.found = ns.found + [ scene_id
+            ~ ': ' ~ scene_name ] -%}\n{%- endfor -%}\n{{ ns.found  | unique | sort
+            }}"
+          is_zigbee_scene: '{{ zb_options is list and zb_options | count > 0 }}
+
+            '
+          options: '{{ zb_options if is_zigbee_scene else scene_options }}
+
+            '
+          topic: '{{ discoveryPrefix }}/select/{{ target_area }}/{{ appId }}/config'
+          payload:
+            name: Scene
+            unique_id: matrix_{{ target_area }}_{{ appId }}_select
+            default_entity_id: select.{{ target_area }}_matrix_{{ appId }}
+            state_topic: '{{ discoveryPrefix }}/select/{{ target_area }}/{{ appId
+              }}/state'
+            value_template: "{% raw %}\n  {{ value_json.sequence_weight ~ ': ' ~ value_json.name
+              }}\n{% endraw %}\n"
+            command_topic: home/universal/bus
+            command_template: "{% raw %}{{ {\n  \"action_type\": \"scene_cycle\",\n
+              \ \"area_key\": \"{% endraw %}{{ target_area }}{% raw %}\",\n  \"action_value\":
+              \ value ,\n  \"source_device\": \"ha_ui_selector\"\n} | tojson }}{%
+              endraw %}\n"
+            options: '{{ options }}'
+            device: '{{ deviceObj }}'
+            json_attributes_topic: '{{ discoveryPrefix }}/select/{{ target_area }}/{{
+              appId }}/attributes'
+            json_attributes_template: '{% raw %}{{ value_json | tojson }}{% endraw
+              %}'
+            availability_topic: '{{ discoveryPrefix }}/select/{{ target_area }}/{{
+              appId }}/status'
+            payload_available: online
+            payload_not_available: offline
+            availability_mode: all
+            icon: mdi:palette-swatch
+        alias: Current Scene Definition
+        enabled: false
+      - action: mqtt.publish
+        data:
+          topic: '{{ topic }}'
+          payload: '{{ payload | tojson }}'
+          retain: true
+        enabled: false
+      - variables:
+          appId: schedule
+          topic: '{{ discoveryPrefix }}/select/{{ target_area }}/{{ appId }}/config'
+          payload:
+            name: Schedule
+            unique_id: matrix_{{ target_area }}_{{ appId }}_select
+            default_entity_id: select.{{ target_area }}_matrix_{{ appId }}
+            state_topic: '{{ discoveryPrefix }}/select/{{ target_area }}/{{ appId
+              }}/state'
+            value_template: '{% raw %}{{ value }}{% endraw %}
+
+              '
+            command_topic: home/{{ appId }}/{{ target_area }}/set
+            command_template: '{% raw %}{{ value }}{% endraw %}
+
+              '
+            options:
+            - 'off'
+            - 'on'
+            - presence
+            device: '{{ deviceObj }}'
+            availability_topic: '{{ discoveryPrefix }}/select/{{ target_area }}/{{
+              appId }}/status'
+            payload_available: online
+            payload_not_available: offline
+            availability_mode: all
+            icon: mdi:sun-clock
+        alias: Current Schedule Definition
+        enabled: false
+      - action: mqtt.publish
+        data:
+          topic: '{{ topic }}'
+          payload: '{{ payload | tojson }}'
+          retain: true
+        enabled: false
+      - action: mqtt.publish
+        data:
+          topic: '{{ discoveryPrefix }}/select/{{ target_area }}/{{ appId }}/state'
+          payload: presence
+          retain: true
+        enabled: false
+      - action: mqtt.publish
+        data:
+          topic: '{{ discoveryPrefix }}/select/{{ target_area }}/{{ appId }}/status'
+          payload: online
+          retain: true
+        enabled: false
+      - variables:
+          history_sensor: select.{{ target_area }}_matrix_scene
+          options: "{{ state_attr('sensor.' ~ target_area ~ '_matrix_scene_config',
+            'options') |\n  default(['0: off']) }}\n"
+          friendly_name: '{{ state_attr(history_sensor,''friendly_name'') }}
+
+            '
+          icon: '{{ state_attr(history_sensor,''icon'') }}
+
+            '
+          history_stack: '{{ state_attr(history_sensor,''history_stack'') | default([],
+            true) }}
+
+            '
+          attributes:
+            options: '{{ options }}'
+            friendly_name: '{{ friendly_name }}'
+            icon: '{{ icon }}'
+            history_stack: "{{ history_stack }}   \n"
+        enabled: false
+      - action: mqtt.publish
+        data:
+          topic: homeassistant/select/{{target_area}}/scene/attributes
+          retain: true
+          payload: '{{ attributes | to_json }}'
+        enabled: false
+      - variables:
+          appId: discovery
+          topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{ appId }}/config'
+          payload:
+            name: Discovery
+            unique_id: matrix_{{ target_area }}_{{ appId }}
+            default_entity_id: sensor.{{ target_area }}_matrix_{{ appId }}
+            state_topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{ appId
+              }}/status'
+            value_template: '{% raw %}{{ value }}{% endraw %}'
+            device: '{{ deviceObj }}'
+            icon: mdi:alarm-panel
+        alias: Discovery Definition
+        enabled: false
+      - action: mqtt.publish
+        data:
+          topic: '{{ topic }}'
+          payload: '{{ payload | tojson }}'
+          retain: true
+        enabled: false
+      - action: mqtt.publish
+        data:
+          topic: homeassistant/select/{{ target_area }}/scene/status
+          payload: online
+          retain: true
+        enabled: false
+      - action: mqtt.publish
+        data:
+          topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{ appId }}/status'
+          payload: online
+          retain: true
+        enabled: false
+      - variables:
+          appId: profile
+          topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{ appId }}/config'
+          payload:
+            name: Area Profile
+            unique_id: '{{ target_area }}_matrix_profile_unique'
+            default_entity_id: sensor.{{ target_area }}_profile
+            state_topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{ appId
+              }}/state'
+            value_template: '{% raw %}{{ value }}{% endraw %}'
+            json_attributes_topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{
+              appId }}/attributes'
+            json_attributes_template: '{% raw %}{{ value_json | tojson }}{% endraw
+              %}'
+            icon: mdi:card-account-details-star
+            device: '{{ deviceObj }}'
+        alias: Area Profile Definition
+        enabled: false
+      - action: mqtt.publish
+        data:
+          topic: '{{ topic }}'
+          payload: '{{ payload | tojson }}'
+          retain: true
+        enabled: false
+    enabled: true
+  alias: 'MQTT Discovery v5.5 '
+  description: ''
+mqtt_discovery_part_2:
+  sequence:
+  - repeat:
+      for_each: '{{ areas() }}'
+      sequence:
+      - variables:
+          target_area: '{{ repeat.item }}'
+          current_profile: sensor.{{ target_area }}_profile
+          current_policy_map: '{{ state_attr(current_profile,''policy_map'')}}'
+          displayName: '{{ area_name(target_area) | default(target_area | replace(''_'',
+            '' '') | title) }}'
+          discoveryPrefix: homeassistant
+          deviceObj:
+            identifiers:
+            - matrix_area_{{ target_area }}
+            name: '{{ displayName }} Matrix'
+            model: Universal Matrix Node
+            manufacturer: Pico Cartographer
+            suggested_area: '{{ displayName }}'
+          adminDeviceObj:
+            identifiers:
+            - profile_admin_{{ target_area }}
+            name: '{{ displayName }} Profile Admin'
+            model: Universal Matrix Node
+            manufacturer: Pico Cartographer
+            suggested_area: '{{ displayName }}'
+      - variables:
+          appId: sub_zone_config
+          select_topic: '{{ discoveryPrefix }}/select/{{ target_area }}/sub_zones_eligible/config'
+          select_payload:
+            name: Active Sub Zone Capability
+            unique_id: '{{ target_area }}_sub_zones_eligible_select_unique'
+            default_entity_id: select.{{ target_area }}_eligible_sub_zones
+            command_topic: homeassistant/select/{{ target_area }}/sub_zones_eligible/set
+            optimistic: true
+            enabled_by_default: true
+            value_template: '{% raw %}{{ value }}{% endraw %}'
+            options:
+            - counter
+            - island
+            icon: mdi:vector-selection
+            device: '{{ adminDeviceObj }}'
+            retain: true
+            labels:
+            - light_schedule
+        alias: Provision Master Sub-Zone Selector
+        enabled: false
+      - variables:
+          appId: sub_zone_config
+          select_topic: '{{ discoveryPrefix }}/select/{{ target_area }}/sub_zones_eligible/config'
+          select_payload:
+        alias: Wipe Out Master Sub-Zone Selector
+      - action: mqtt.publish
+        data:
+          topic: '{{ select_topic }}'
+          payload: '{{ select_payload | tojson }}'
+          retain: true
+        enabled: true
+      - delay:
+          milliseconds: 100
+        enabled: false
+      - variables:
+          appId: profile
+          topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{ appId }}/config'
+          payload:
+            name: Area Profile
+            unique_id: '{{ target_area }}_matrix_profile_unique'
+            default_entity_id: sensor.{{ target_area }}_profile
+            state_topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{ appId
+              }}/state'
+            value_template: '{% raw %}{{ value }}{% endraw %}'
+            json_attributes_topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{
+              appId }}/attributes'
+            json_attributes_template: '{% raw %}{{ value_json | tojson }}{% endraw
+              %}'
+            icon: mdi:card-account-details-star
+            retain: true
+            device: '{{ deviceObj }}'
+        alias: Area Profile Definition
+        enabled: false
+      - action: mqtt.publish
+        data:
+          topic: '{{ topic }}'
+          payload: '{{ payload | tojson }}'
+          retain: true
+        enabled: false
+      - variables:
+          appId: profile_admin
+          postures:
+          - morning
+          - daylight
+          - evening
+          - night
+        alias: Generate Native MQTT UI Selectors
+        enabled: false
+      - repeat:
+          for_each: '{{ postures }}'
+          sequence:
+          - action: mqtt.publish
+            data:
+              topic: homeassistant/select/{{ target_area }}/policy_{{ repeat.item
+                }}/config
+              retain: true
+              payload: "{\n  \"name\": \"{{ repeat.item | title }} Policy\",\n  \"unique_id\":
+                \"{{ target_area }}_policy_{{ repeat.item }}_select_unique\",\n  \"default_entity_id\":
+                \"select.{{ target_area }}_profile_{{ repeat.item }}\",\n  \"command_topic\":
+                \"homeassistant/select/{{ target_area }}/policy_{{ repeat.item }}/set\",\n
+                \ \"state_topic\": \"homeassistant/select/{{ target_area }}/policy_{{
+                repeat.item }}/set\",\n  \"value_template\": \"{% raw %}{{ value }}{%
+                endraw %}\",  \n  \"options\": [\"manual\",\"presence\", \"on\", \"off\"],\n
+                \ \"icon\": \"mdi:timeline-clock\",\n  \"device\": {{ adminDeviceObj
+                | tojson }},\n  \"retain\": true,\n  \"labels\": [\"light_schedule\"]\n}"
+            enabled: true
+          - delay:
+              milliseconds: 100
+            enabled: true
+          - action: select.select_option
+            metadata: {}
+            target:
+              entity_id: select.{{ target_area }}_profile_{{ repeat.item }}
+            data:
+              option: '{{ current_policy_map.get( repeat.item, ''manual'') }}'
+            enabled: true
+        enabled: false
+  alias: MQTT Discovery - Part 2
+  description: ''

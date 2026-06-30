@@ -1,0 +1,265 @@
+# ==============================================================================
+# POSTURE HORIZONS TEMPLATE ENGINE (Lighting Controller Instance - .111)
+# Core Philosophy: Standardized Controls, Universal Design, 2:00 AM Fail-Safe
+# ==============================================================================
+# This sensor acts as an autonomous temporal clock. It computes local solar bounds
+# and user-defined schedules using strict Unix integer epoch math. It remains
+# insulated from upstream network/host (.222) dropouts by falling back to local defaults.
+# ==============================================================================
+
+sensor:
+  - name: "Posture Horizons"
+    unique_id: posture_horizons_registry
+    icon: mdi:clock-digit-profile
+    state: >-
+      {# Pull the real-time calculated boundaries safely using 'this' to prevent listener loops #}
+      {% set h = this.attributes.get('horizons') | default(none, true) %}
+      {% if h is string %}
+        {% set h = h | from_json %}
+      {% endif %}
+
+      {% if h is not none and h.get('morning_start_ts') is not none %}
+        {% set now_ts = as_timestamp(now()) | int %}
+        
+        {% if now_ts >= (h.morning_start_ts | int) and now_ts < (h.morning_end_ts | int) %}
+          morning
+        {% elif now_ts >= (h.daylight_start_ts | int) and now_ts < (h.daylight_end_ts | int) %}
+          daylight
+        {% elif now_ts >= (h.evening_start_ts | int) and now_ts < (h.evening_end_ts | int) %}
+          evening
+        {% else %}
+          night
+        {% endif %}
+      {% else %}
+        idle
+      {% endif %}
+
+    attributes:
+      horizons: >-
+        {# 1. Register state listeners and fetch active mode targets #}
+        {% set registry = state_attr('sensor.global_variable_registry', 'vars') | default({}, true) %}
+        {% set g_env = registry.get('globals', {}).get('environmental', {}) %}
+        {% set party_entity = g_env.get('party_mode', 'binary_sensor.party_mode_active') %}
+        {% set guest_entity = g_env.get('guest_mode', 'binary_sensor.guest_mode_active') %}
+
+        {% set is_party = is_state(party_entity, 'on') if states(party_entity) not in ['unknown', 'unavailable'] else false %}
+        {% set is_guest = is_state(guest_entity, 'on') if states(guest_entity) not in ['unknown', 'unavailable'] else false %}
+
+        {# 2. Recover current registry attributes cleanly from local state #}
+        {% set current_registry = this.attributes.get('horizons') | default(none, true) %}
+        {% if current_registry is string %}
+          {% set current_registry = current_registry | from_json %}
+        {% endif %}
+
+        {# 3. Evaluate epoch expiration bounds #}
+        {% set stored_night_end = current_registry.get('night_end_ts') | default(0) | int if current_registry is not none else 0 %}
+        {% set is_expired = (stored_night_end > 0 and as_timestamp(now()) | int >= stored_night_end) %}
+
+        {# 4. Determine if an administrative mode shift requires recalculation #}
+        {% set stored_party = current_registry.get('is_party', false) if current_registry is not none else false %}
+        {% set stored_guest = current_registry.get('is_guest', false) if current_registry is not none else false %}
+        {% set mode_changed = (is_party != stored_party or is_guest != stored_guest) %}
+
+        {# =============================================================== #}
+        {# EVALUATION ENGINE TRIGGER                                       #}
+        {# Fired strictly on boot, expiration, or active mode changes      #}
+        {# =============================================================== #}
+        {% if current_registry is none or current_registry == {} or is_expired or mode_changed %}
+          {% set today_str = now().strftime('%Y-%m-%d') %}
+          {% set tomorrow_str = (now() + timedelta(days=1)).strftime('%Y-%m-%d') %}
+          {% set tz = now().strftime('%z') %}
+
+          {# Resolve and instantly cast Core Solar Anchors to local timezone datetime objects first #}
+          {% set sunrise_dt = (as_datetime(state_attr('sun.sun', 'next_rising')) | default(now() + timedelta(days=1), true)).astimezone() %}
+          {% set sunset_dt = (as_datetime(state_attr('sun.sun', 'next_setting')) | default(now() + timedelta(days=1), true)).astimezone() %}
+          
+          {# Day Normalization (String comparison now evaluates localized date strings correctly) #}
+          {% set sunrise_fixed = sunrise_dt if sunrise_dt.strftime('%Y-%m-%d') == today_str else sunrise_dt - timedelta(days=1) %}
+          {% set sunset_fixed = sunset_dt if sunset_dt.strftime('%Y-%m-%d') == today_str else sunset_dt - timedelta(days=1) %}
+
+          {# Standard Clock-Based Wakeup boundary #}
+          {% set clock_0700 = as_datetime(today_str ~ "T07:00:00" ~ tz) %}
+          
+          {# Determine Night Shift Bounds based on Active Scheduling Modes #}
+          {% set night_hour = 1 if is_party else (0 if is_guest else 23) %}
+          {% set night_date_str = tomorrow_str if (is_party or is_guest) else today_str %}
+          {% set night_start_dt = as_datetime(night_date_str ~ "T" ~ "{:02d}".format(night_hour) ~ ":00:00" ~ tz) %}
+
+          {# =============================================================== #}
+          {# SEQUENTIAL LAYOUT CONFIGURATION                                 #}
+          {# Peak Summer Constraint: If sunrise occurs before 07:00 AM,      #}
+          {# morning_start resolves to sunrise_fixed, creating a 0-second    #}
+          {# transition window. Morning lighting is completely bypassed.     #}
+          {# =============================================================== #}
+          {% set morning_start = sunrise_fixed if sunrise_fixed < clock_0700 else clock_0700 %}
+          {% set next_day_start = morning_start + timedelta(days=1) %}
+
+          {{ {
+            "last_updated_ts": as_timestamp(now()) | int,
+            "is_party": is_party,
+            "is_guest": is_guest,
+            "morning_start_ts": as_timestamp(morning_start) | int,
+            "morning_end_ts": as_timestamp(sunrise_fixed) | int,
+            
+            "daylight_start_ts": as_timestamp(sunrise_fixed) | int,
+            "daylight_end_ts": as_timestamp(sunset_fixed) | int,
+            
+            "evening_start_ts": as_timestamp(sunset_fixed) | int,
+            "evening_end_ts": as_timestamp(night_start_dt) | int,
+            
+            "night_start_ts": as_timestamp(night_start_dt) | int,
+            "night_end_ts": as_timestamp(next_day_start) | int,
+            
+            "morning_start": morning_start.isoformat(),
+            "morning_end": sunrise_fixed.isoformat(),
+
+            "daylight_start": sunrise_fixed.isoformat(),
+            "daylight_end": sunset_fixed.isoformat(),
+
+            "evening_start": sunset_fixed.isoformat(),
+            "evening_end": night_start_dt.isoformat(),
+
+            "night_start": night_start_dt.isoformat(),
+            "night_end": next_day_start.isoformat()
+          } }}
+        {% else %}
+          {{ current_registry }}
+        {% endif %}
+
+      # {# =============================================================== #}
+      # {# =============================================================== #}
+      # {# =============================================================== #}
+
+      # {% set current_posture = states('sensor.house_posture') %}
+      # {% set previous_posture = this.state | default('night') %}
+      # {% set is_daybreak = (current_posture != 'night' and previous_posture == 'night') %}
+
+      # {# Fetch current attributes safely #}
+      # {% set current_registry = this.attributes.horizons | default(none, true) %}
+
+      # {# Evaluate expiration using raw numerical comparison #}
+      # {% set stored_night_end = current_registry.get('night_end_ts') | default(0) | float if current_registry is not none else 0 %}
+      # {% set is_expired = (stored_night_end > 0 and as_timestamp(now()) >= stored_night_end) %}
+
+      # {# =============================================================== #}
+      # {# FORCE BOOT TRIGGER                                              #}
+      # {# Trigger if dawn, if registry is completely empty, or if expired  #}
+      # {# =============================================================== #}
+      # {% if is_daybreak or current_registry is none or current_registry == {} or is_expired %}
+      #   {% set today_str = now().strftime('%Y-%m-%d') %}
+      #   {% set tomorrow_str = (now() + timedelta(days=1)).strftime('%Y-%m-%d') %}
+      #   {% set tz = now().strftime('%z') %}
+
+      #   {% set registry = state_attr('sensor.global_variable_registry', 'vars') | default({}, true) %}
+      #   {% set g_env = registry.get('globals', {}).get('environmental', {}) %}
+      #   {% set is_party = is_state(g_env.get('party_mode_sensor', 'binary_sensor.party_mode_active'), 'on') %}
+      #   {% set is_guest = is_state(g_env.get('guest_mode_sensor', 'binary_sensor.guest_mode_active'), 'on') %}
+
+      #   {# Core Solar Anchors cast directly to Local Datetime Objects #}
+      #   {% set sunrise_dt = as_datetime(state_attr('sun.sun', 'next_rising')).astimezone() %}
+      #   {% set sunset_dt = as_datetime(state_attr('sun.sun', 'next_setting')).astimezone() %}
+
+      #   {# Day Normalization #}
+      #   {% set sunrise_fixed = sunrise_dt if sunrise_dt.strftime('%Y-%m-%d') == today_str else sunrise_dt - timedelta(days=1) %}
+      #   {% set sunset_fixed = sunset_dt if sunset_dt.strftime('%Y-%m-%d') == today_str else sunset_dt - timedelta(days=1) %}
+
+      #   {# Clock Anchors #}
+      #   {% set clock_0700 = as_datetime(today_str ~ "T07:00:00" ~ tz) %}
+
+      #   {# Determine Night Shift Bounds based on Active Scheduling Modes #}
+      #   {% set night_hour = 1 if is_party else (0 if is_guest else 23) %}
+      #   {% set night_date_str = tomorrow_str if (is_party or is_guest) else today_str %}
+      #   {% set night_start_dt = as_datetime(night_date_str ~ "T" ~ "{:02d}".format(night_hour) ~ ":00:00" ~ tz) %}
+
+      #   {# =============================================================== #}
+      #   {# SEQUENTIAL LAYOUT CONFIGURATION                                 #}
+      #   {# Peak Summer Constraint: If sunrise occurs before 07:00 AM,      #}
+      #   {# morning_start resolves to sunrise_fixed, creating a 0-second    #}
+      #   {# transition window. Morning lighting is completely bypassed.     #}
+      #   {# =============================================================== #}
+
+      #   {# Sequential Layout #}
+      #   {% set morning_start = sunrise_fixed if sunrise_fixed < clock_0700 else clock_0700 %}
+      #   {% set next_day_start = morning_start + timedelta(days=1) %}
+
+      #   {{ {
+      #     "last_updated_ts": as_timestamp(now()),
+      #     "morning_start_ts": as_timestamp(morning_start),
+      #     "morning_end_ts": as_timestamp(sunrise_fixed),
+
+      #     "daylight_start_ts": as_timestamp(sunrise_fixed),
+      #     "daylight_end_ts": as_timestamp(sunset_fixed),
+
+      #     "evening_start_ts": as_timestamp(sunset_fixed),
+      #     "evening_end_ts": as_timestamp(night_start_dt),
+
+      #     "night_start_ts": as_timestamp(night_start_dt),
+      #     "night_end_ts": as_timestamp(next_day_start),
+
+      #     "morning_start": morning_start.isoformat(),
+      #     "morning_end": sunrise_fixed.isoformat(),
+
+      #     "daylight_start": sunrise_fixed.isoformat(),
+      #     "daylight_end": sunset_fixed.isoformat(),
+
+      #     "evening_start": sunset_fixed.isoformat(),
+      #     "evening_end": night_start_dt.isoformat(),
+
+      #     "night_start": night_start_dt.isoformat(),
+      #     "night_end": next_day_start.isoformat()
+      #   } }}
+      # {% else %}
+      #   {{ current_registry }}
+      # {% endif %}
+
+      # {# =============================================================== #}
+      # {# =============================================================== #}
+      # {# =============================================================== #}
+
+    # attributes:
+    #   # =================================================================
+    #   # DISTILLED HORIZONS ENGINE: Explicit Phase Boundaries
+    #   # =================================================================
+    #   horizons: >-
+    #     {% set today_str = now().strftime('%Y-%m-%d') %}
+    #     {% set tomorrow_str = (now() + timedelta(days=1)).strftime('%Y-%m-%d') %}
+    #     {% set tz = now().strftime('%z') %}
+
+    #     {# 1. Global Context & Solar Resolution #}
+    #     {% set registry = state_attr('sensor.global_variable_registry', 'vars') | default({}, true) %}
+    #     {% set g_env = registry.get('globals', {}).get('environmental', {}) %}
+    #     {% set is_party = is_state(g_env.get('party_mode_sensor', 'binary_sensor.party_mode_active'), 'on') %}
+    #     {% set is_guest = is_state(g_env.get('guest_mode_sensor', 'binary_sensor.guest_mode_active'), 'on') %}
+
+    #     {% set sunrise = as_datetime(state_attr('sun.sun', 'next_rising')) %}
+    #     {% set sunset = as_datetime(state_attr('sun.sun', 'next_setting')) %}
+
+    #     {# 2. Core Clock Anchors #}
+    #     {% set clock_0700 = as_datetime(today_str ~ "T07:00:00" ~ tz) %}
+
+    #     {% set night_hour = 1 if is_party else (0 if is_guest else 23) %}
+    #     {% set night_date_str = tomorrow_str if (is_party or is_guest) else today_str %}
+    #     {% set night_start_dt = as_datetime(night_date_str ~ "T" ~ "{:02d}".format(night_hour) ~ ":00:00" ~ tz) %}
+
+    #     {# 3. Sequential Onset Calculations #}
+    #     {% set morning_start = sunrise if clock_0700 < sunrise else clock_0700 %}
+
+    #     {# Tomorrow's Morning Onset (for Night End Boundary tracking) #}
+    #     {% set tom_sunrise = sunrise + timedelta(days=1) if sunrise.strftime('%Y-%m-%d') == today_str else sunrise %}
+    #     {% set tom_clock_0700 = as_datetime(tomorrow_str ~ "T07:00:00" ~ tz) %}
+    #     {% set next_day_start = tom_sunrise if tom_sunrise < tom_clock_0700 else tom_clock_0700 %}
+
+    #     {# 4. Output Map with Explicit Structural Pairing #}
+    #     {{ {
+    #       "morning_start": morning_start.isoformat(),
+    #       "morning_end": sunrise.isoformat(),
+
+    #       "daylight_start": sunrise.isoformat(),
+    #       "daylight_end": sunset.isoformat(),
+
+    #       "evening_start": sunset.isoformat(),
+    #       "evening_end": night_start_dt.isoformat(),
+
+    #       "night_start": night_start_dt.isoformat(),
+    #       "night_end": next_day_start.isoformat()
+    #     } }}
