@@ -1,0 +1,169 @@
+- id: '1784085549798'
+  name: 0 Off
+  entities:
+    light.basement_kitchen_sconce:
+      min_color_temp_kelvin: 2202
+      max_color_temp_kelvin: 4000
+      effect_list:
+      - blink
+      - breathe
+      - okay
+      - channel_change
+      - finish_effect
+      - stop_effect
+      supported_color_modes:
+      - color_temp
+      group_entities:
+      - light.basement_kitchen_bulb1
+      - light.basement_kitchen_bulb2
+      effect:
+      color_mode:
+      brightness:
+      color_temp_kelvin:
+      hs_color:
+      rgb_color:
+      xy_color:
+      friendly_name: Basement Kitchen
+      supported_features: 44
+      state: 'off'
+    light.basement_kitchen_main:
+      supported_color_modes:
+      - brightness
+      color_mode:
+      brightness:
+      friendly_name: Main Basement Kitchen Main
+      supported_features: 40
+      state: 'off'
+  metadata: {}
+- id: '1784085758420'
+  name: 20 Transit
+  entities:
+    light.basement_kitchen_sconce:
+      min_color_temp_kelvin: 2202
+      max_color_temp_kelvin: 4000
+      effect_list:
+      - blink
+      - breathe
+      - okay
+      - channel_change
+      - finish_effect
+      - stop_effect
+      supported_color_modes:
+      - color_temp
+      group_entities:
+      - light.basement_kitchen_bulb1
+      - light.basement_kitchen_bulb2
+      effect:
+      color_mode: color_temp
+      brightness: 64
+      color_temp_kelvin: 3816
+      hs_color:
+      - 26.914
+      - 38.308
+      rgb_color:
+      - 255
+      - 201
+      - 157
+      xy_color:
+      - 0.432
+      - 0.368
+      friendly_name: Basement Kitchen
+      supported_features: 44
+      state: 'on'
+    light.basement_kitchen_main:
+      supported_color_modes:
+      - brightness
+      color_mode:
+      brightness:
+      friendly_name: Main Basement Kitchen Main
+      supported_features: 40
+      state: 'off'
+  metadata: {}
+- id: '1784086395680'
+  name: 80 Entertain
+  entities:
+    light.basement_kitchen_sconce:
+      min_color_temp_kelvin: 2202
+      max_color_temp_kelvin: 4000
+      effect_list:
+      - blink
+      - breathe
+      - okay
+      - channel_change
+      - finish_effect
+      - stop_effect
+      supported_color_modes:
+      - color_temp
+      group_entities:
+      - light.basement_kitchen_bulb1
+      - light.basement_kitchen_bulb2
+      effect:
+      color_mode: color_temp
+      brightness: 190
+      color_temp_kelvin: 4000
+      hs_color:
+      - 26.812
+      - 34.87
+      rgb_color:
+      - 255
+      - 206
+      - 166
+      xy_color:
+      - 0.42
+      - 0.365
+      friendly_name: Basement Kitchen
+      supported_features: 44
+      state: 'on'
+    light.basement_kitchen_main:
+      supported_color_modes:
+      - brightness
+      color_mode: brightness
+      brightness: 187
+      friendly_name: Main Basement Kitchen Main
+      supported_features: 40
+      state: 'on'
+  metadata: {}
+- id: '1784160686982'
+  name: 60 Media
+  entities:
+    light.basement_kitchen_sconce:
+      min_color_temp_kelvin: 2202
+      max_color_temp_kelvin: 4000
+      effect_list:
+      - blink
+      - breathe
+      - okay
+      - channel_change
+      - finish_effect
+      - stop_effect
+      supported_color_modes:
+      - color_temp
+      group_entities:
+      - light.basement_kitchen_bulb1
+      - light.basement_kitchen_bulb2
+      effect:
+      color_mode: color_temp
+      brightness: 64
+      color_temp_kelvin: 3676
+      hs_color:
+      - 27.015
+      - 41.078
+      rgb_color:
+      - 255
+      - 197
+      - 150
+      xy_color:
+      - 0.441
+      - 0.37
+      friendly_name: Basement Kitchen
+      supported_features: 44
+      state: 'on'
+    light.basement_kitchen_main:
+      supported_color_modes:
+      - brightness
+      color_mode: brightness
+      brightness: 61
+      friendly_name: Main Basement Kitchen Main
+      supported_features: 40
+      state: 'on'
+  metadata: {}
