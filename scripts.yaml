@@ -1793,13 +1793,13 @@ discovery_v5_5:
             icon: mdi:database-sync
             device: '{{ deviceObj }}'
         alias: Presence Definition
-        enabled: true
+        enabled: false
       - action: mqtt.publish
         data:
           topic: '{{ topic }}'
           payload: '{{ payload | tojson }}'
           retain: true
-        enabled: true
+        enabled: false
       - variables:
           appId: scene_config
           topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{ appId }}/config'
@@ -1843,13 +1843,13 @@ discovery_v5_5:
             device: '{{ deviceObj }}'
             icon: mdi:history
         alias: Previous Scene Definition
-        enabled: true
+        enabled: false
       - action: mqtt.publish
         data:
           topic: '{{ topic }}'
           payload: '{{ payload | tojson }}'
           retain: true
-        enabled: true
+        enabled: false
       - variables:
           appId: posture
           topic: '{{ discoveryPrefix }}/sensor/{{ target_area }}/{{ appId }}/config'
@@ -1894,6 +1894,7 @@ discovery_v5_5:
             name: Scene
             unique_id: matrix_{{ target_area }}_{{ appId }}_select
             default_entity_id: select.{{ target_area }}_matrix_{{ appId }}
+            optimistic: true
             state_topic: '{{ discoveryPrefix }}/select/{{ target_area }}/{{ appId
               }}/state'
             value_template: "{% raw %}\n  {{ value_json.scene_id ~ ' ' ~ value_json.scene_name
@@ -1916,13 +1917,13 @@ discovery_v5_5:
             availability_mode: all
             icon: mdi:palette-swatch
         alias: Current Scene Definition
-        enabled: false
+        enabled: true
       - action: mqtt.publish
         data:
           topic: '{{ topic }}'
           payload: '{{ payload | tojson }}'
           retain: true
-        enabled: false
+        enabled: true
       - variables:
           appId: schedule
           topic: '{{ discoveryPrefix }}/select/{{ target_area }}/{{ appId }}/config'
@@ -2624,7 +2625,7 @@ mqtt_discovery_part_3:
     enabled: false
   - variables:
       appId: scene
-      Target_area: gym
+      target_area: gym
       scene_options: "{% set opt = state_attr('sensor.' ~ target_area ~\n'_matrix_scene_config',
         'options') %} \n{{ opt if opt is list and opt | count > 0 else ['0 Off'] }}"
       zb_options: "{% set ns = namespace(found=[]) %}\n{%- set prefix = 'scene.' ~
@@ -2645,6 +2646,7 @@ mqtt_discovery_part_3:
         name: Scene
         unique_id: matrix_{{ target_area }}_{{ appId }}_select
         default_entity_id: select.{{ target_area }}_matrix_{{ appId }}
+        optimistic: true
         state_topic: '{{ discoveryPrefix }}/select/{{ target_area }}/{{ appId }}/state'
         value_template: "{% raw %}\n  {{ value_json.scene_id ~ ' ' ~ value_json.scene_name
           }}\n{% endraw %}\n"
