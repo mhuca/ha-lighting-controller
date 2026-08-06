@@ -1,27 +1,3 @@
-- id: '1775739275271'
-  alias: 'Bridge Export: Universal Controller Command 1.1'
-  description: Important
-  triggers:
-  - event_type: universal_controller_command
-    trigger: event
-    event_data:
-      command_input: broadcast
-  conditions:
-  - condition: template
-    value_template: '{{ trigger.event.data.controller_id is not defined }}'
-  actions:
-  - variables:
-      payload: '{{ dict(trigger.event.data, controller_id = ''lighting_primary'')  |
-        to_json  }}
-
-        '
-  - data:
-      topic: home/universal/bus
-      payload: '{{ payload }}
-
-        '
-    action: mqtt.publish
-  mode: single
 - id: '1776171591154'
   alias: Discovery Generator v5.5
   description: Universal Matrix Node Discovery Generator (History Aware)
@@ -814,7 +790,7 @@
           claimant_id: "{{ 'pico.' ~ [ \n    trigger.event.data.area_name | default('unknown',
             true), \n    trigger.event.data.device_name | default('device', true)\n
             \ ] | slugify }}"
-          seconds: '{{ -1 if cmd.action == ''turn_on'' else 0 }}'
+          seconds: '{{ 7200 if cmd.action == ''turn_on'' else 0 }}'
           publish_intent: '{{ ''ignore'' if not is_eligable else ''add'' if cmd.action
             == ''turn_on'' else ''remove'' }}'
           intent_type: '{{ intent_type }}'
@@ -4708,518 +4684,6 @@
       reason: Native commissioning asset sweep triggered by {{ trigger.id }}
   mode: parallel
   max: 10
-- id: '1780920210684'
-  alias: GPE - Orchestrator (V7.0)
-  description: "# GPE - ORCHESTRATOR (V7.0) \nDecision engine for environmental presence.\n##
-    1. CORE PURPOSE\nActs as the central decision engine for environmental presence.
-    Fully  integrated with the Priority Intent Stack (Registry v6.1).\n## 2. ARCHITECTURAL
-    LOGIC\n* **Priority Intent Integration**: All presence events are tagged with
-    \n  `intent_type: motion` to ensure they interact correctly with the \n  multi-layered
-    priority stack.\n  \n* **Standardized Handshake**: Uses `claimant_id` as the primary
-    identifier \n  to align with Registry v6.1 and Cleaner v2.1 standards.\n  \n*
-    **The Handover Pattern**: When high-precision presence clears, the system \n  automatically
-    hands over to a 120s motion-type timer instead of immediate \n  removal, preventing
-    jarring light cut-offs.\n\n* **The Gatekeeper Pattern**: Suppresses redundant
-    commands if the room \n  is already in the desired state and filters false-positives
-    via \n  Ghost/Veto logic.\n\n## 3. VERSION HISTORY\n* **V6.0**: Implemented area
-    specific registers for static and configuration items\n* **V5.0**: Implemented
-    'Purpose-specific triggers' and 'Label-based targets'  Added the MQTT trigger
-    to allow for Reolink person sensors to be triggers without having the Reolink
-    integration installed.\n* **V3.0**: Implemented schduled lighting via lighting
-    schedule template sensor.\n* **V2.4**: Implemented conditional 'seconds' (30s
-    for door-only transitions).\n* **V2.3.5**: Fixed Safety Unlock to use explicit
-    'add' for grace period.\n* **V2.3.3**: Hardened Presence Update/Cleared aliases
-    to strictly ignore \n  locked areas. Prevents motion-off events from overwriting
-    infinite locks.\n\n* **V2.3.2**: Refined Valid Turn On to ignore door events if
-    area is locked.\n  Prevents race conditions between Portal Turn On and Safety
-    Unlock.\n\n* **V2.3.1**: Relaxed door_age restriction in should_lock_area. \n
-    \ Allows locking if motion is sustained while the door is closed, \n  even if
-    the door closure was >120s ago.\n\n* **V2.3**: Removed 'Presence Off' from should_unlock_area
-    to prevent \n  premature unlocking when motion clears in locked zones.\n  \n*
-    **V2.2**: Fix Modified should_unlock_area to transition to a 30s grace period
-    instead  of immediate removal to prevent instant blackouts when doors open.\n*
-    **V2.1**: Standardized on `claimant_id`. Implemented 120s \"Handover\" logic for
-    cleared presence. Restored missing Door Timer and Motion Reset logic. \n* **V2.0**:
-    Implemented Multi-Tenant Ownership tracking. Standardized event \n  schema for
-    Registry v5.7 compatibility.\n  \n* **V1.5**: Updated attribute paths to `active_intents`.
-    Standardized \n  `intent_type` as 'motion' for all presence-based additions."
-  triggers:
-  - trigger: motion.cleared
-    target:
-      label_id: presence
-    options:
-      behavior: each
-      for:
-        hours: 0
-        minutes: 0
-        seconds: 10
-  - trigger: motion.detected
-    target:
-      label_id: presence
-    options:
-      behavior: each
-  - trigger: occupancy.cleared
-    target:
-      label_id: presence
-    options:
-      behavior: each
-  - trigger: occupancy.detected
-    target:
-      label_id: presence
-    options:
-      behavior: each
-  - trigger: door.closed
-    target:
-      label_id: door
-    options:
-      behavior: each
-      for:
-        hours: 0
-        minutes: 0
-        seconds: 5
-  - trigger: door.opened
-    target:
-      label_id: door
-    options:
-      behavior: each
-  - trigger: mqtt
-    options:
-      topic: home/sensor/+/person
-    id: Broadcast
-    enabled: false
-  conditions: []
-  actions:
-  - variables:
-      source_entity: "{% if trigger.id == 'Broadcast' %}\n  {{ trigger.payload_json.target.entity_id
-        | default('none') }}\n{% else %}\n  {{ trigger.entity_id | default('none')
-        }}\n{% endif %}\n"
-      target_area: "{% if trigger.id == 'Broadcast' %}\n  {{ trigger.payload_json.target.area_id
-        | default('none') }}\n{% else %}\n  {{ area_id(source_entity) | default('none')
-        }}\n{% endif %}"
-      entity_labels: "{% if trigger.id == 'Broadcast' %}\n  {{ trigger.payload_json.target.label_id
-        | default([]) }}\n{% else %}\n  {{ labels(source_entity) | default([]) }}\n{%
-        endif %}"
-      profile_sensor: sensor.{{ target_area }}_profile
-      profile_exists: '{{ states(profile_sensor) not in [''unknown'', ''unavailable'']
-        }}'
-      profile_topography: '{{ state_attr(profile_sensor, ''topography'') | default({},
-        true) }}'
-      profile_policy_map: '{{ state_attr(profile_sensor, ''policy_map'') | default({},
-        true) }}'
-      profile_features: '{{ state_attr(profile_sensor, ''features'') | default({},
-        true) }}'
-      door_entities: '{{ profile_topography.get(''door_entities'', []) }}'
-      presence_entities: '{{ profile_topography.get(''presence_entities'', []) }}'
-      door_entity: '{{ door_entities | first | default(''none'') }}'
-      has_door: '{{ door_entity != ''none'' and states(door_entity) not in [''unknown'',
-        ''unavailable''] }}'
-      presence_entity: '{{ presence_entities | first | default(''none'') }}'
-      has_presence: '{{ presence_entity != ''none'' }}'
-      door_state: '{{ states(door_entity) if has_door else ''none'' }}'
-      is_door_closed: '{{ is_state(door_entity, ''off'') if has_door else false }}'
-      door_age: '{{ as_timestamp(now()) - as_timestamp(states[door_entity].last_changed,
-        0) if has_door else 0 }}'
-      current_posture: '{% set registry = state_attr(''sensor.global_variable_registry'',
-        ''vars'') |
-
-        default({}, true) %}
-
-        {% set g_env = registry.get(''globals'', {}).get(''environmental'', {}) %}
-
-
-        {{ states(g_env.get(''schedule_posture'','''')) | default(''daylight'', true)
-        }}'
-      profile_posture: "{% set backstop = profile_policy_map.get(current_posture,
-        'none') %}\n{% set sub_zones_data = state_attr(profile_sensor, 'sub_zones')
-        | default({}, true) %}\n\n{# Check if any label on the firing entity matches
-        a declared sub-zone key #}\n{% set matched_zone = entity_labels | select('in',
-        sub_zones_data.keys()) | first | default(none) %}\n\n{% if matched_zone is
-        not none %}\n  {# Pull the sparse policy for this sub-zone's posture map #}\n
-        \ {% set zone_policy = sub_zones_data[matched_zone].get('policy_map', {}).get(current_posture,
-        'none') %}\n  {# If the sparse map says 'none', it explicitly falls back to
-        the room backstop default #}\n  {{ backstop if zone_policy == 'none' else
-        zone_policy }}\n{% else %}\n  {{ backstop }}\n{% endif %}"
-      old_profile_posture: '{{ profile_policy_map.get(current_posture, ''none'') }}'
-      is_on: '{{ is_state(source_entity, ''on'') }}'
-      is_presence: '{{ ''presence'' in entity_labels or ''person'' in entity_labels
-        or source_entity in presence_entities }}'
-      is_presence_policy_active: '{{ (profile_posture == ''presence'' or profile_posture
-        == ''on'') }}'
-      is_door: '{{ ''door'' in entity_labels or source_entity in door_entities }}'
-      is_entrance: '{{ ''entrance'' in entity_labels }}'
-      use_scene: '{{ profile_features.get(''scene_eligible'', true) }}'
-      target_select: select.{{ target_area }}_matrix_scene
-      current_history: '{{ state_attr(target_select, ''history_stack'') | default([],
-        true) }}'
-      current_scene: '{{ state_attr(target_select, ''scene'') | default({}, true)
-        }}'
-      is_lock_zone: '{{ profile_features.get(''lock_eligible'', false) }}'
-      use_night_settings: '{% set registry = state_attr(''sensor.global_variable_registry'',
-        ''vars'') |
-
-        default({}, true) %}
-
-        {% set g_env = registry.get(''globals'', {}).get(''environmental'', {}) %}
-
-
-        {{ profile_features.get(''night_light'', false) and
-
-
-        is_state(g_env.night_posture_sensor, ''on'') }}
-
-        '
-      final_target_label: "{% if use_night_settings %} \n  {{ ['night_light'] }} \n{%
-        else %}\n  {% set sub_zones_data = state_attr(profile_sensor, 'sub_zones')
-        | default({}, true) %}\n  {# Find if any of the firing entity's labels match
-        a declared sub-zone key #}\n  {% set matched_zone = entity_labels | select('in',
-        sub_zones_data.keys()) | first | default(none) %}\n  \n  {% if matched_zone
-        is not none %}\n    {{ [matched_zone] }}\n  {% else %}\n    {{ ['main'] }}\n
-        \ {% endif %}\n{% endif %}"
-      old_final_target_label: "{% if use_night_settings %} \n  {{ ['night_light']
-        }} \n{% else %}\n  {{ ['main'] }}\n{% endif %}"
-      adjoining_area: '{{ profile_topography.get(''peer_area'', ''none'') }}'
-      local_registry: sensor.{{ target_area }}_presence_intent
-      current_stack: "{% set raw_stack = state_attr(local_registry, 'intent_stack')
-        | default([], true) %} {% set ns = namespace(cleaned=[]) %} {% for item in
-        raw_stack %}\n  {% if 'claimant_id' in item %}\n    {% set ns.cleaned = ns.cleaned
-        + [item] %}\n  {% elif 'claimant' in item %}\n    {% set ns_item = namespace(new_dict={'claimant_id':
-        item.claimant}) %}\n    {% for key, value in item.items() if key != 'claimant'
-        %}\n      {% set ns_item.new_dict = dict(ns_item.new_dict, **{key: value})
-        %}\n    {% endfor %}\n    {% set ns.cleaned = ns.cleaned + [ns_item.new_dict]
-        %}\n  {% endif %}\n{% endfor %} \n      \n{{ ns.cleaned }}"
-      locked_intent: '{{ current_stack | selectattr(''locked'', ''eq'', true) | first
-        | default(none) }}'
-      is_area_locked: '{{ locked_intent is not none }}'
-      locked_claimant_id: '{{ locked_intent.claimant_id if is_area_locked else ''none''
-        }}'
-      area_context:
-        area_id: '{{ target_area }}'
-        posture: '{{ current_posture }}'
-        profile_posture: '{{ profile_posture }}'
-        final_label: '{{ final_target_label }}'
-        is_door_closed: '{{ is_door_closed }}'
-        door_age: '{{ door_age | int }}'
-        is_locked: '{{ is_area_locked }}'
-        use_scene: '{{ use_scene }}'
-        profile_features: '{{ profile_features }}'
-        profile_topography: '{{ profile_topography }}'
-      hvac_action: "{% set registry = state_attr('sensor.global_variable_registry',
-        'vars') | default({}, true) %}\n{% set g_hvac = registry.get('globals', {}).get('hvac',
-        {}) %}\n\n{{ state_attr(g_hvac.get('primary_unit','climate.my_ecobee'), 'hvac_action')\n
-        \ | default('idle')\n}}"
-      hvac_is_active: '{{ hvac_action in [''heating''] }}'
-      is_ghost: '{{ has_door and is_presence and is_on and is_door_closed and not
-        is_area_locked and (door_age > 600 or hvac_is_active) and is_lock_zone }}'
-      should_lock_area: "{{ \n  is_lock_zone and \n  is_presence and \n  is_on and
-        \n  is_door_closed and \n  not is_area_locked and \n  (door_age < 120 or (current_stack
-        | selectattr('type', 'eq', 'motion') | list | count > 0)) \n}}"
-      should_unlock_area: '{{ is_area_locked and ((is_door and is_on) or (has_door
-        and not is_door_closed and door_age < 5)) }}'
-      should_trigger_peer: '{{ is_door and is_on and target_area != ''none'' and adjoining_area
-        != ''none'' }}'
-  - variables:
-      target_select: select.{{ target_area }}_matrix_scene
-      raw_scene: '{{ states(target_select) }}'
-      is_room_off: '{% set s = raw_scene %} {{ s is defined and (s == ''0'' or s.startswith(''0:''))
-        }}
-
-        '
-      call_scene: '{{ is_room_off and is_presence_policy_active and is_on and use_scene
-        }}'
-      call_off_scene: '{{ not is_room_off and is_presence_policy_active and not is_on
-        and use_scene }}'
-  - choose:
-    - alias: Veto Log (Ghost Detected)
-      conditions:
-      - condition: template
-        value_template: '{{ is_presence and is_on and is_ghost }}'
-      sequence:
-      - action: logbook.log
-        data:
-          name: GPE VETO
-          message: 'GPE VETO: Ghost in {{ target_area }} (HVAC: {{ hvac_action }},
-            Door Age: {{ door_age | int }}s, Lock Status: {{ is_area_locked}})'
-          entity_id: '{{ source_entity }}'
-    - alias: Lock Presence (Sabbatical)
-      conditions:
-      - condition: template
-        value_template: '{{ should_lock_area and not is_area_locked }}'
-      sequence:
-      - event: lighting_registry_update
-        event_data:
-          action: lock
-          claimant_id: '{{ door_entity }}'
-          target:
-            area_id: '{{ target_area }}'
-          intent_type: motion
-          area_context: '{{ area_context }}'
-        enabled: true
-      - if:
-        - condition: template
-          value_template: '{{ not use_scene }}'
-        then:
-        - event: universal_controller_command
-          event_data:
-            action_type: light_call
-            command_input: turn_on
-            target:
-              area_id: '{{ target_area }}'
-              label_id: '{{ final_target_label }}'
-            action_value: '{{ ''night_mode'' if use_night_settings else ''day_mode''
-              }}'
-            metadata:
-              action: lock
-              claimant_id: '{{ source_entity }}'
-              intent_type: motion
-            area_context: '{{ area_context }}'
-            source_device: '{{ source_entity }}'
-        else:
-        - event: lighting_registry_update
-          event_data:
-            action: lock
-            claimant_id: '{{ source_entity }}'
-            target:
-              area_id: '{{ target_area }}'
-              label_id: '{{ final_target_label }}'
-            intent_type: motion
-            area_context: '{{ area_context }}'
-        - event: universal_controller_command
-          event_data:
-            action_type: scene_cycle
-            target:
-              area_id: '{{ target_area }}'
-            action_value: restore
-            metadata:
-              publish_intent: lock
-              claimant_id: '{{ source_entity }}'
-              intent_type: motion
-            area_context: '{{ area_context }}'
-            source_device: '{{ source_entity }}'
-          enabled: true
-        enabled: false
-      - action: logbook.log
-        data:
-          name: GPE LOCKED
-          message: 'LOCKED: {{ target_area }} via {{ source_entity }}. (Door Age:
-            {{ door_age | int }}s, Presence: {{ is_on }})'
-          entity_id: '{{ source_entity }}'
-    - alias: Valid Turn On (Anti-Ghosting)
-      conditions:
-      - condition: template
-        value_template: "{# Only allow Portal/Motion Turn On if not locked. If locked,
-          Safety Unlock handles the exit. #} \n{{ (is_entrance or is_door or is_presence)
-          and is_presence_policy_active and is_on and not is_ghost and not is_area_locked
-          }}"
-      sequence:
-      - action: logbook.log
-        data:
-          name: GPE
-          message: 'Turn On: Via {{''Motion'' if is_presence else ''Portal'' }} Room
-            {{ target_area }} (Registry Reset, Door Age: {{ door_age | int }}s)'
-          entity_id: '{{ source_entity }}'
-      - if:
-        - condition: template
-          value_template: '{{ not use_scene }}'
-        then:
-        - event: universal_controller_command
-          event_data:
-            action_type: light_call
-            command_input: turn_on
-            target:
-              area_id: '{{ target_area }}'
-              label_id: '{{ final_target_label }}'
-            action_value: '{{ ''night_mode'' if use_night_settings else ''day_mode''
-              }}'
-            metadata:
-              publish_intent: add
-              claimant_id: '{{ source_entity }}'
-              seconds: '{{ 30 if is_door and has_presence else -1 }}'
-              intent_type: motion
-            area_context: '{{ area_context }}'
-            source_device: '{{ source_entity }}'
-        - event: lighting_registry_update
-          event_data:
-            action: add
-            claimant_id: '{{ source_entity }}'
-            target:
-              area_id: '{{ target_area }}'
-              label_id: '{{ final_target_label }}'
-            seconds: '{{ 30 if is_door and has_presence else -1 }}'
-            intent_type: motion
-            area_context: '{{ area_context }}'
-          enabled: false
-        else:
-        - event: lighting_registry_update
-          event_data:
-            action: remove
-            claimant_id: '{{ source_entity }}'
-            target:
-              area_id: '{{ target_area }}'
-              label_id: '{{ final_target_label }}'
-            intent_type: motion
-            area_context: '{{ area_context }}'
-        - if:
-          - condition: template
-            value_template: '{{ current_scene.scene_id == 0 }}'
-          then:
-          - event: universal_controller_command
-            event_data:
-              action_type: scene_cycle
-              target:
-                area_id: '{{ target_area }}'
-              action_value: restore
-              metadata:
-                publish_intent: remove
-                claimant_id: '{{ source_entity }}'
-                intent_type: motion
-              area_context: '{{ area_context }}'
-              source_device: '{{ source_entity }}'
-    - alias: Presence Cleared (Handover)
-      conditions:
-      - condition: template
-        value_template: '{{ is_presence and not is_on and not is_area_locked }}'
-      sequence:
-      - choose:
-        - conditions:
-          - condition: template
-            value_template: '{{ not use_scene }}'
-          sequence:
-          - event: lighting_registry_update
-            event_data:
-              action: add
-              claimant_id: '{{ source_entity }}'
-              target:
-                area_id: '{{ target_area }}'
-                label_id: '{{ final_target_label }}'
-              intent_type: motion
-              seconds: 110
-              area_context: '{{ area_context }}'
-          - action: logbook.log
-            data:
-              name: GPE
-              message: 'Cleared: Via {{''Motion'' if is_presence else ''Portal'' }}
-                Room {{ target_area }} (Registry Reset, Door Age: {{ door_age | int
-                }}s)'
-              entity_id: '{{ source_entity }}'
-          alias: Start Expiry Timer (120s)
-        - conditions:
-          - condition: template
-            value_template: '{{ call_off_scene }}'
-          sequence:
-          - event: lighting_registry_update
-            event_data:
-              action: add
-              claimant_id: '{{ source_entity }}'
-              target:
-                area_id: '{{ target_area }}'
-                label_id: '{{ final_target_label }}'
-              intent_type: motion
-              skip_warning: true
-              seconds: 240
-              area_context: '{{ area_context }}'
-          - action: logbook.log
-            data:
-              name: GPE
-              message: 'Cleared: Via {{''Motion'' if is_presence else ''Portal'' }}
-                Room {{ target_area }} (Registry Reset, Door Age: {{ door_age | int
-                }}s)'
-              entity_id: '{{ source_entity }}'
-          alias: Call Off Scene
-      - event: cleaner_heartbeat
-        enabled: false
-    - alias: Door Closed Timer Reset
-      conditions:
-      - condition: template
-        value_template: '{{ is_door and not is_on }}'
-      sequence:
-      - event: lighting_registry_update
-        event_data:
-          action: add
-          claimant_id: '{{ source_entity }}'
-          target:
-            area_id: '{{ target_area }}'
-            label_id: '{{ final_target_label }}'
-          intent_type: motion
-          seconds: 30
-          skip_warning: '{{ not is_lock_zone }}'
-          area_context: '{{ area_context }}'
-    - alias: Presence Update (Motion Reset)
-      conditions:
-      - condition: template
-        value_template: '{{ is_presence and is_on and not is_area_locked and (not
-          has_door or not is_door_closed ) }}'
-      sequence:
-      - event: lighting_registry_update
-        event_data:
-          action: add
-          claimant_id: '{{ source_entity }}'
-          target:
-            area_id: '{{ target_area }}'
-            label_id: '{{ final_target_label }}'
-          intent_type: motion
-          seconds: 120
-          area_context: '{{ area_context }}'
-    - alias: Safety Unlock (Grace Period)
-      conditions:
-      - condition: template
-        value_template: '{{ should_unlock_area }}'
-      sequence:
-      - action: logbook.log
-        data:
-          name: GPE UNLOCK
-          message: 'UNLOCKING: {{ target_area }} (Handover to 30s Grace). (Reason:
-            Door Opened/Ajar)'
-          entity_id: '{{ source_entity }}'
-      - event: lighting_registry_update
-        event_data:
-          action: purge
-          claimant_id: '{{ locked_claimant_id }}'
-          target:
-            area_id: '{{ target_area }}'
-            label_id: '{{ final_target_label }}'
-          intent_type: motion
-          seconds: 0
-          area_context: '{{ area_context }}'
-      - event: lighting_registry_update
-        event_data:
-          action: add
-          claimant_id: '{{ locked_claimant_id }}'
-          target:
-            area_id: '{{ target_area }}'
-            label_id: '{{ final_target_label }}'
-          intent_type: motion
-          seconds: 30
-          locked: false
-          area_context: '{{ area_context }}'
-    enabled: true
-    default:
-    - action: logbook.log
-      data:
-        name: GPE
-        message: 'Dropped: {{''Motion'' if is_presence else ''Portal'' }} in {{ area_name(target_area)
-          }} (Door Age: {{ door_age | int }}s)'
-        entity_id: '{{ source_entity }}'
-  - if:
-    - condition: template
-      value_template: '{{ should_trigger_peer }}'
-    then:
-    - event: universal_controller_command
-      event_data:
-        action_type: light_call
-        command_input: turn_on
-        target:
-          area_id: '{{ adjoining_area }}'
-          label_id: '{{ final_target_label }}'
-        action_value: ''
-        metadata:
-          publish_intent: skip
-        area_context: '{{ area_context }}'
-    enabled: true
-  mode: parallel
-  variables: {}
-  max: 50
-  trace:
-    stored_traces: 50
 - id: '1780923670428'
   alias: System - Area Profile Provisioning Engine (V7.0)
   description: Sweeps room topology, maps policies/features, and publishes MQTT Profiles
@@ -5611,73 +5075,6 @@
   mode: single
   trace:
     stored_traces: 50
-- id: '1781061204512'
-  alias: GPE - Presence Heartbeat (V1.6 - Fail Fast)
-  description: Event-driven watchdog for presence expiry. Implements advanced short-circuit
-    evaluation to eliminate Jinja parsing overhead.
-  triggers:
-  - trigger: event
-    event_type: gpe_heartbeat_sync
-    id: sync_event
-    enabled: false
-  - trigger: event
-    event_type: gpe_heartbeat_clear
-    id: clear_cmd
-    enabled: false
-  conditions:
-  - condition: template
-    value_template: '{{ trigger.id != ''clear_cmd'' }}'
-  actions:
-  - variables:
-      event_payload: '{{ trigger.event.data | default({}, true) }}'
-      has_payload: '{{ event_payload.active_intent_count is defined }}'
-      registries: "{% if has_payload and event_payload.active_intent_count == 0 %}\n
-        \ []\n{% else %}\n  {{ label_entities('lights_off') \n     | expand \n     |
-        selectattr('state', 'ne', 'idle')\n     | selectattr('attributes.expiry',
-        'defined')\n     | rejectattr('attributes.expiry', 'in', [none, ''])\n     |
-        map(attribute='entity_id') \n     | list }}\n{% endif %}"
-  - if:
-    - condition: template
-      value_template: '{{ registries | count == 0 }}'
-    then:
-    - stop: No active room registries found. Watchdog going to sleep.
-    else:
-    - variables:
-        urgent_deadline: "{% set items = registries | expand %}\n{% set ns = namespace(min_diff=3600.0)
-          %}\n{% for i in items %}\n  {# Ensure attributes.expiry exists and is cast
-          cleanly to a timestamp #}\n  {% set expiry = state_attr(i.entity_id, 'expiry')
-          %}\n  {% if expiry not in [none, null, 'none', 'null'] %}\n    {% set diff
-          = as_timestamp(expiry) - as_timestamp(now()) %}\n    {% if diff > 0 and
-          diff < ns.min_diff %}\n      {% set ns.min_diff = diff | float %}\n    {%
-          endif %}\n  {% endif %}\n{% endfor %}\n{{ ns.min_diff | float }}\n        "
-        next_check: '{% set deadline = urgent_deadline | float(3600) %}
-
-          {% if deadline <= 15 %} 15
-
-          {% elif deadline <= 30 %} 30
-
-          {% else %} 60
-
-          {% endif %}'
-    - parallel:
-      - if:
-        - condition: template
-          value_template: '{{ next_check | int > 0 }}'
-        then:
-        - delay:
-            seconds: '{{ next_check | int }}'
-        - event: gpe_heartbeat_sync
-          event_data:
-            reason: recurring_check
-            active_intent_count: '{{ registries | count }}'
-      - repeat:
-          for_each: '{{ registries }}'
-          sequence:
-          - action: mqtt.publish
-            data:
-              topic: homeassistant/sensor/{{ area_id(repeat.item) }}/presence/state
-              payload: reset
-  mode: restart
 - id: '1781103264536'
   alias: Override - Unified Gateway V5.0
   description: "# SYSTEM: OVERRIDE GATEWAY (V5.0)\n\nCentral processing engine for
@@ -6020,7 +5417,7 @@
           action: add
           claimant_id: '{{ source_entity }}'
           intent_type: override
-          seconds: '{{ -1 if is_state(source_entity, ''on'') else 0 }}'
+          seconds: '{{ 7200 if is_state(source_entity, ''on'') else 0 }}'
           source_device: manual_action
       - if:
         - condition: template
@@ -6228,479 +5625,6 @@
   trace:
     stored_traces: 50
   max: 10
-- id: '1781277108814'
-  alias: GPE - Stateful Batching Janitor V2.0
-  triggers:
-  - trigger: event
-    event_type: presence_state_update
-  actions:
-  - delay:
-      milliseconds: 20
-  - variables:
-      areas_init: '{{ state_attr(''sensor.presence_state_registry'', ''active_areas'')
-        or {} }}'
-      exp_times: "{% set ns = namespace(times=[]) %} {% for area, data in areas_init.items()
-        %}\n  {% if data.expiry is defined and data.expiry is not none %}\n    {%
-        set ns.times = ns.times + [data.expiry] %}\n  {% endif %}\n{% endfor %} {{
-        ns.times | sort }}"
-      next_target: '{{ exp_times | first | default(''None (Overrides Active)'') }}'
-  - repeat:
-      while:
-      - condition: template
-        value_template: '{{ (state_attr(''sensor.presence_state_registry'', ''active_areas'')
-          or {}) | length > 0 }}'
-      sequence:
-      - variables:
-          areas: '{{ state_attr(''sensor.presence_state_registry'', ''active_areas'')
-            or {} }}'
-          now_ts: '{{ as_timestamp(now()) }}'
-          sweep_limit: '{{ now_ts + 10.0 }}'
-          expired_batch: "{% set ns = namespace(items=[]) %} {% for area, data in
-            areas.items() %}\n  {% if data.expiry is defined and data.expiry is not
-            none and data.expiry <= sweep_limit %}\n    {% set ns.items = ns.items
-            + [area] %}\n  {% endif %}\n{% endfor %} {{ ns.items }}"
-          next_survivor_expiry: "{% set ns = namespace(times=[]) %} {% for area, data
-            in areas.items() %}\n  {% if data.expiry is defined and data.expiry is
-            not none and data.expiry > sweep_limit %}\n    {% set ns.times = ns.times
-            + [data.expiry] %}\n  {% endif %}\n{% endfor %} {{ ns.times | sort | first
-            | default(none) }}"
-          sleep_duration: "{% if next_survivor_expiry is not none %}\n  {% set target_sleep
-            = (next_survivor_expiry - sweep_limit) %}\n  {{ target_sleep if target_sleep
-            > 0 else 0.1 }}\n{% else %}\n  {{ 3600.0 if areas | length > 0 else 0
-            }}\n{% endif %}"
-      - if:
-        - condition: template
-          value_template: '{{ expired_batch | length > 0 }}'
-        then:
-        - repeat:
-            for_each: '{{ expired_batch }}'
-            sequence:
-            - event: presence_state_update
-              event_data:
-                area_id: '{{ repeat.item }}'
-                state: EVICTED
-                last_claimant: batch_janitor_engine
-            - event: universal_controller_command
-              event_data:
-                source_device: gpe_janitor
-                action_type: light_call
-                command_input: turn_off
-                target:
-                  area_id: '{{ repeat.item }}'
-                metadata:
-                  publish_intent: remove
-                  claimant_id: '{{ areas.get(repeat.item, {}).get(''last_claimant'',
-                    '''') }}'
-                  seconds: 0
-                  intent_type: '{{ areas.get(repeat.item, {}).get(''last_intent_type'',
-                    ''motion'') }}'
-      - if:
-        - condition: template
-          value_template: '{{ sleep_duration | float > 0 }}'
-        then:
-        - delay: '{{ sleep_duration | float }}'
-  mode: restart
-  trace:
-    stored_traces: 50
-- id: '1781277965279'
-  alias: GPE - Intent Distributor (V2.0)
-  description: "# GPE - INTENT DISTRIBUTOR (V2.0.0)\n\n## 1. ARCHITECTURAL CORE\nManages
-    Area-Specific MQTT Intent Registries. It acts as the central intake for all presence
-    and lighting overrides, maintaining a prioritized \"intent stack\" for every area.\n\n##
-    2. VERSION LOGIC (v1.4.1)\n* **Strict Claimant ID**: Standardized usage of `claimant_id`.
-    \n* **Self-Healing**: Implements legacy key detection to convert `claimant` keys
-    to `claimant_id` automatically.\n* **Optimization**: Removed redundant `/presence/state`
-    MQTT publications to reduce bus traffic.\n* **Lock Resolution**: Improved logic
-    to distinguish between explicit lock commands, inherited locks, and payload-defined
-    states.\n\n## 3. PRIORITY LEVELS\n* **Priority 3**: Schedules (Highest persistence).\n*
-    **Priority 2**: Manual Overrides (User intervention).\n* **Priority 1**: Motion/Automation
-    (Standard logic).\n"
-  triggers:
-  - trigger: event
-    event_type: lighting_registry_update
-  - trigger: event
-    event_type: esphome.lighting_registry_update
-  - trigger: event
-    event_type: universal_controller_command
-    event_data:
-      action_type: lighting_registry_update
-  - trigger: event
-    event_type: universal_controller_command
-    event_data:
-      action_type: light_override
-  - trigger: mqtt
-    id: MQTT_Bus
-    options:
-      topic: home/universal/bus
-      payload: lighting_registry_update
-      value_template: '{{ value_json.action_type }}'
-  actions:
-  - parallel:
-    - alias: Rate Limited Heartbeat Sync
-      sequence:
-      - condition: template
-        alias: 'Fail-Fast: Rate limit execution to once every 20 seconds'
-        value_template: "{% set last = this.attributes.last_triggered %} {{ last is
-          none or (now() - last).total_seconds() > 20 }}\n                "
-      - variables:
-          active_intent_count: "{% set registries = label_entities('lights_off') |
-            expand %}\n  {% set ns = namespace(count=0) %}\n  {% for r in registries
-            %}\n    {% set stack = r.attributes.intent_stack | default([]) %}\n    {%
-            if stack | selectattr('expiry', 'defined') \n               | rejectattr('expiry',
-            'in', [none, '']) \n               | rejectattr('locked', 'eq', true)\n
-            \              | list | count > 0 %}\n      {% set ns.count = ns.count
-            + 1 %}\n    {% endif %}\n  {% endfor %}\n  {{ ns.count }}"
-      - event: gpe_heartbeat_sync
-        event_data:
-          active_intent_count: '{{ active_intent_count }}'
-          reason: '{{ ''registry_distribution_complete'' if active_intent_count ==
-            0 else ''intent_updated'' }}
-
-            '
-    - alias: Main Process Block
-      sequence:
-      - variables:
-          p: '{{ (trigger.payload | from_json) if trigger.platform == ''mqtt'' else
-            trigger.event.data }}'
-          target_area: '{% set t = p.get(''target'', {}) %}
-
-            {{ t.get(''area_id'', p.get(''area_key'', p.get(''target_area'',''none'')))
-            }}'
-          val: "{% set t = p.get('target', {}) %} \n{{ t.get('label_id') | default(p.get('target_label'),
-            true) }}"
-          target_labels: '{{ ( [val] if val is string else val) }}
-
-            '
-          action_type: '{{ p.action_type | default(''lighting_registry_update'') }}'
-          is_valid_mqtt: '{{ trigger.platform != ''mqtt'' or action_type in [''lighting_registry_update'',
-            ''light_override''] }}'
-      - condition: template
-        value_template: '{{ is_valid_mqtt and target_area is not none }}'
-      - variables:
-          action: '{{ p.action | default(''add'') }}'
-          cid: '{{ p.claimant_id | default(''system'') | string }}'
-          intent_type: '{{ p.intent_type | default(''motion'') | string }}'
-          local_registry: sensor.{{ target_area }}_presence_intent
-          current_stack: "{%\n  set raw_stack = state_attr(local_registry, 'intent_stack')
-            | default([], true) \n%}  \n{% set ns = namespace(cleaned=[]) %}  \n\n\n{%
-            for item in raw_stack %}\n  {# 1. Extract and normalize structural keys
-            #}\n  {% set c_id = item.claimant_id if 'claimant_id' in item else item.get('claimant')
-            %}\n  {% set exp = item.get('expiry') %}\n  {# 2. Run time-travel evaluations
-            #}\n  {% set is_expired = (exp is not none and exp != 'none' and exp |
-            string != '' and as_timestamp(exp) < as_timestamp(now())) %}\n  \n  {#
-            3. Only retain if claimant exists AND the token hasn't lapsed into history,
-            OR if it's an un-expiring lock #}\n  {% if c_id is not none and (not is_expired
-            or item.get('locked', false) or exp is none) %}\n    {# Normalize structure
-            to use standard claimant_id key format #}\n    {% set ns_item = namespace(new_dict={'claimant_id':
-            c_id}) %}\n    {% for key, value in item.items() if key not in ['claimant',
-            'claimant_id'] %}\n      {% set ns_item.new_dict = dict(ns_item.new_dict,
-            **{key: value}) %}\n    {% endfor %}\n    {% set ns.cleaned = ns.cleaned
-            + [ns_item.new_dict] %}\n  {% endif %}\n{% endfor %}  \n\n\n{{ ns.cleaned
-            }}"
-      - choose:
-        - conditions:
-          - condition: template
-            value_template: '{{ action in [''add'', ''lock'', ''override''] or action_type
-              == ''light_override'' }}'
-          sequence:
-          - variables:
-              is_off_cmd: '{{ action_type == ''light_override'' and p.action_value
-                == ''off'' }}'
-              is_schedule: '{{ (action_type == ''schedule'' or action == ''schedule''
-                or p.intent_type == ''schedule'') }}
-
-                '
-              is_override: '{{ (action_type == ''light_override'' or action == ''override''
-                or p.intent_type == ''override'') }}'
-              intent_type: '{{ ''override'' if is_override else (p.intent_type | default(''motion''))
-                }}'
-              priority: '{{ 3 if is_schedule else ( 2 if is_override else (p.priority
-                | default(1) | int)) }}'
-              existing: '{{ current_stack | selectattr(''claimant_id'', ''eq'', cid)
-                | first | default({}) }}'
-              new_stack: "{% \n  set registry = state_attr('sensor.global_variable_registry',
-                'vars') | default({}, true) \n%}\n{% set g_env = registry.get('globals',
-                {}).get('environmental', {}) %}\n{% set dur_work = g_env.get('override_duration_work',
-                36000) | int %}\n{% set dur_std = g_env.get('override_duration_standard',
-                3600) | int %}\n\n{% if is_off_cmd %}\n  {{ current_stack | rejectattr('type',
-                'eq', 'override') | rejectattr('claimant_id', 'eq', cid) | list }}\n{%
-                else %}\n  {# IMPROVED LOCK RESOLUTION #}\n  {% set explicit_lock
-                = p.locked if p.locked is defined else none %}\n  {% set final_lock
-                = false %}\n  {% if action == 'lock' %}\n    {% set final_lock = true
-                %}\n  {% elif explicit_lock is not none %}\n    {% set final_lock
-                = explicit_lock in ['true', true, 'on', 'ON'] %}\n  {% else %}\n    {%
-                set final_lock = existing.get('locked', false) %}\n  {% endif %}\n\n
-                \ {# EXPIRY CALCULATIONS #}\n  {% set expiry = none %}\n  {% set seconds
-                = p.seconds | default(-2) | int %}\n  \n  {% if not final_lock %}\n
-                \   {% if seconds == -1 %}\n      {% set expiry = none %}\n    {%
-                elif seconds != -2 %}\n      {# Standard Transient Tokens (Motion
-                / Doors) #}\n      {% set default_secs = 30 if 'door' in cid else
-                120 %}\n      {% set final_seconds = seconds if seconds >= 0 else
-                default_secs %}\n      {% set expiry = (now() + timedelta(seconds=final_seconds)).isoformat()
-                %}\n      \n    {% elif is_schedule %}\n      {# =================================================================
-                #}\n      {# PERSISTENT SCHEDULE RUNWAY: Read pre-calculated horizon
-                data     #}\n      {# =================================================================
-                #}\n      {% set current_posture = states('sensor.posture_horizons')
-                %}\n      {% set hz = state_attr('sensor.posture_horizons', 'horizons')
-                | default({}, true) %}\n      \n      {% if current_posture == 'morning'
-                %}\n        {% set expiry = hz.morning_end %}\n      {% elif current_posture
-                == 'evening' %}\n        {% set expiry = hz.evening_end %}\n      {%
-                elif current_posture == 'night' %}\n        {% set expiry = hz.night_end
-                %}\n      {% else %}\n        {# Idle or Day defaults to a clean 1-hour
-                holding block until evening #}\n        {% set expiry = (now() + timedelta(hours=1)).isoformat()
-                %}\n      {% endif %}\n\n    {% elif is_override %}\n      {% if seconds
-                != -2 %}\n        {% set is_work_area = ('work' in (labels(target_area)
-                | default([], true))) %}\n        {% set expiry = (now() + timedelta(seconds=(p.seconds
-                | default(dur_work if is_work_area else dur_std) | int))).isoformat()
-                %}\n      {% else %}\n        {% set expiry = none %}\n      {% endif
-                %}\n    {% else %}\n      {# Standard Transient Tokens (Motion / Doors)
-                #}\n      {% set default_secs = 30 if 'door' in cid else 120 %}\n
-                \     {% set final_seconds = seconds if seconds >= 0 else default_secs
-                %}\n      {% set expiry = (now() + timedelta(seconds=final_seconds)).isoformat()
-                %}\n    {% endif %}\n  {% endif %}\n\n  {% set entry = {\n    'type':
-                intent_type,\n    'claimant_id': cid,\n    'priority': priority,\n
-                \   'expiry': expiry,\n    'locked': final_lock,\n    'action_value':
-                p.action_value | default('manual' if is_override else ''),\n    'warned':
-                false,\n    'skip_warning': (p.skip_warning in ['true', true] or intent_type
-                != 'motion' or final_lock),\n    'target_labels': target_labels,\n
-                \   'last_updated': now().isoformat()\n  } %}\n  {% set others = current_stack
-                | rejectattr('claimant_id', 'eq', cid) | list %}\n  {{ others + [entry]
-                }}\n{% endif %}"
-          alias: Add, Lock, Override
-        - conditions:
-          - condition: template
-            value_template: '{{ action == ''remove'' }}'
-          sequence:
-          - variables:
-              new_stack: '{{ current_stack | rejectattr(''claimant_id'', ''eq'', cid)
-                | list }}'
-          alias: Remove
-        - conditions:
-          - condition: template
-            value_template: '{{ action == ''purge'' }}'
-          sequence:
-          - variables:
-              new_stack: []
-          alias: Purge
-        - conditions:
-          - condition: template
-            value_template: '{{ action == ''warned'' }}'
-          sequence:
-          - variables:
-              new_stack: "{% set ns = namespace(stk=[]) %}\n{% for i in current_stack
-                %}\n  {% if i.claimant_id == cid %}\n    {% set ns.stk = ns.stk +
-                [dict(i, warned=true, last_updated=now().isoformat(), expiry=(now()
-                + timedelta(seconds=20)).isoformat())] %}\n  {% else %}\n    {% set
-                ns.stk = ns.stk + [i] %}\n  {% endif %}\n{% endfor %}\n{{ ns.stk }}"
-          alias: Warn
-      - variables:
-          top_expiry: "{% if new_stack is defined and new_stack | length > 0 %}\n
-            \ {# 1. Strict Isolation of Infinite Holds & Hardware Locks #}\n  {% set
-            ns_hold = namespace(active=false) %}\n  {% for item in new_stack %}\n
-            \   {% if item.expiry in [none, null, 'none', 'null', 'infinite', '']
-            or item.locked == true %}\n      {% set ns_hold.active = true %}\n    {%
-            endif %}\n  {% endfor %}\n\n  {% if ns_hold.active %}\n    none\n  {%
-            else %}\n    {# 2. Process Transient Countdowns with True Datetime Math
-            #}\n    {% set ns_tokens = namespace(valid=[]) %}\n    {% for item in
-            new_stack %}\n      {% set item_exp = as_datetime(item.expiry) %}\n      {%
-            if item_exp is not none and item_exp > now() %}\n        {# Compute a
-            deterministic sorting weight #}\n        {% set lock_score = 1000000 if
-            item.locked else 0 %}\n        {% set priority_score = (item.priority
-            | default(1) | int) * 10000 %}\n        {# Weight combines structural
-            importance with the physical remaining lifespan #}\n        {% set weight
-            = lock_score + priority_score + as_timestamp(item_exp) %}\n        {%
-            set ns_tokens.valid = ns_tokens.valid + [{'expiry': item.expiry, 'weight':
-            weight}] %}\n      {% endif %}\n    {% endfor %}\n\n    {% if ns_tokens.valid
-            | length > 0 %}\n      {# Sort purely by the calculated weight score #}\n
-            \     {% set winner = ns_tokens.valid | sort(attribute='weight', reverse=true)
-            | first %}\n      {{ winner.expiry }}\n    {% else %}\n      none\n    {%
-            endif %}\n  {% endif %}\n{% else %}\n  none\n{% endif %}"
-          old_top_expiry: "{% if new_stack is defined and new_stack | length > 0 %}\n
-            \ {# 1. Check if there is an infinite hardware hold or lock active in
-            the stack #}\n  {% set infinite_holds = new_stack | selectattr('expiry',
-            'none') | list %}\n  \n  {% if infinite_holds | length > 0 or new_stack
-            | selectattr('locked', 'eq', true) | list | length > 0 %}\n    {# An mmWave
-            sensor or lock is active. No countdown exists. #}\n    none\n  {% else
-            %}\n    {# 2. No infinite holds exist. Filter and find the highest valid
-            future countdown #}\n    {% set active_tokens = new_stack | selectattr('expiry',
-            'defined') | rejectattr('expiry', 'none') | selectattr('expiry', '>=',
-            now().isoformat()) | list %}\n    \n    {% if active_tokens | length >
-            0 %}\n      {% set winner = active_tokens \n        | sort(attribute='expiry',
-            reverse=true)\n        | sort(attribute='priority', reverse=true)\n        |
-            sort(attribute='locked', reverse=true) \n        | first %}\n      {{
-            winner.get('expiry') }}\n    {% else %}\n      none\n    {% endif %}\n
-            \ {% endif %}\n{% else %}\n  none\n{% endif %}"
-      - action: mqtt.publish
-        data:
-          topic: homeassistant/sensor/{{ target_area }}/presence/attributes
-          payload: '{{ {''intent_stack'': new_stack, ''expiry'': top_expiry,''last_updated'':
-            now().isoformat(), ''last_claimant'': cid} | tojson }}    '
-          retain: true
-      - action: mqtt.publish
-        data:
-          topic: homeassistant/sensor/{{ target_area }}/presence/state
-          payload: "{# 1. Direct attribute access is faster and cleaner #}\n{% set
-            expiry = top_expiry %}\n{% set stack_count = new_stack | count %}\n{%
-            set winner = new_stack | sort(attribute='priority', reverse=true) \n   |
-            sort(attribute='locked', reverse=true) \n   | first\n   | default({})\n%}\n\n{%
-            if stack_count == 0 %}\n  idle\n{% elif winner.get('locked', false) %}\n
-            \ locked\n{% elif expiry is none or expiry == 'none' %}\n  {# Locked or
-            infinite intents are always active #}\n  active\n{% else %}\n  {% set
-            t_diff = as_timestamp(expiry) - as_timestamp(now()) %}\n  {% if t_diff
-            <= 0 %}\n    expired\n  {% elif t_diff <= 120 %}\n    {# The 'Warning
-            Track' state #}\n    expiring\n  {% else %}\n    active\n  {% endif %}\n{%
-            endif %}"
-      - alias: Stop if Area is Locked or Has Infinite Hold
-        condition: template
-        value_template: "{% set ns_lock = namespace(active=false) %} \n\n{% if new_stack
-          is defined and new_stack | length > 0 %}\n  {% for item in new_stack %}\n
-          \   {% if item.expiry in [none, null, 'none', 'null', 'infinite', ''] or
-          item.locked == true %}\n      {% set ns_lock.active = true %}\n    {% endif
-          %}\n  {% endfor %}\n{% endif %} \n\n{{ not ns_lock.active }}"
-        enabled: false
-      - alias: Project State to Local Event Bus
-        event: presence_state_update
-        event_data:
-          area_id: '{{ target_area }}'
-          state: "{# 1. Check the local stack array for active infinite holds or structural
-            locks #} {% set ns_lock = namespace(active=false) %} {% if new_stack is
-            defined and new_stack | length > 0 %}\n  {% for item in new_stack %}\n
-            \   {% if item.expiry in [none, null, 'none', 'null', 'infinite', '']
-            or item.locked == true %}\n      {% set ns_lock.active = true %}\n    {%
-            endif %}\n  {% endfor %}\n{% endif %}\n{# 2. Run the corrected state output
-            calculation #} {% if ns_lock.active %}\n  ACTIVE\n{% elif new_stack |
-            length > 0 and top_expiry is not none and top_expiry != 'none' and top_expiry
-            | string != '' %}\n  {# FIX: If there is time remaining on the countdown,
-            the area is in COOLDOWN #}\n  {{ 'COOLDOWN' if as_timestamp(top_expiry)
-            - as_timestamp(now()) > 0 else 'EVICTED' }}\n{% else %}\n  EVICTED\n{%
-            endif %}"
-          last_claimant: '{{ cid }}'
-          last_intent_type: '{{ intent_type }}'
-          expiry_ttl: "{% if top_expiry is not none and top_expiry != 'none' and top_expiry
-            | string != '' %}\n  {% set delta = as_timestamp(top_expiry) - as_timestamp(now())
-            %}\n  {{ delta | round(3) if delta > 0 else 0 }}\n{% else %}\n  0\n{%
-            endif %}"
-  mode: parallel
-  max: 20
-  trace:
-    stored_traces: 50
-- id: '1781289501610'
-  alias: UCC - Loopback Coordinator
-  description: Handles relative steering, history tracking registers, and UI selector
-    state loopbacks
-  triggers:
-  - trigger: mqtt
-    id: bus_mqtt
-    enabled: true
-    options:
-      topic: home/universal/bus
-      payload: scene_cycle
-      value_template: '{{ value_json.action_type }}'
-  - trigger: event
-    id: bus_event
-    event_type: universal_controller_command
-    event_data:
-      action_type: scene_cycle
-    enabled: true
-  - trigger: event
-    event_type: call_service
-    event_data:
-      domain: scene
-      service: turn_on
-    id: core_scene_call
-  actions:
-  - variables:
-      is_service_call: '{{ trigger.id == ''core_scene_call'' }}'
-      called_scene_entity: "{% if is_service_call %}\n  {{ trigger.event.data.service_data.entity_id[0]
-        if trigger.event.data.service_data.entity_id is list else trigger.event.data.service_data.entity_id
-        }}\n{% else %}\n  none\n{% endif %}"
-      payload: "{% if trigger.id == 'bus_mqtt' %}\n  {{ trigger.payload_json }}\n{%
-        elif is_service_call %}\n  {{ {'source_device': 'native_core_scene_call',
-        'action_value': called_scene_entity.split('.')[1]} }}\n{% else %}\n  {{ trigger.event.data
-        }}\n{% endif %}"
-      target_area: "{% if trigger.id == 'bus_mqtt' %}\n  {{ payload.area_key }}\n{%
-        elif is_service_call %}\n  {{ area_id(called_scene_entity) | default('none',
-        true) }}\n{% else %}\n  {{ payload.get('target', {}).get('area_id', 'none')
-        }}\n{% endif %}"
-      o_payload: '{{ trigger.payload_json if trigger.id == ''bus_mqtt'' else trigger.event.data
-        }}'
-      o_target_area: '{{ payload.area_key if trigger.id == ''bus_mqtt'' else payload.get(''target'',
-        {}).get(''area_id'', ''none'') }}'
-      action_raw: '{{ payload.action_value | default(''next'') | string }}'
-      target_select: select.{{ target_area }}_matrix_scene
-      current_history: '{{ state_attr(target_select, ''history_stack'') | default([],
-        true) }}'
-      local_options: '{{ state_attr(target_select, ''options'') | default([], true)
-        }}'
-      zb_options: "{% set ns = namespace(found=[]) %}\n{% set prefix = 'scene.' ~
-        target_area ~ '_' %}\n{% for s in states.scene | selectattr('entity_id', 'search',
-        '^' ~ prefix ~ '[0-9]*0_') %}\n  {% set suffix = s.entity_id | replace(prefix,
-        '', 1) %}\n  {% set parts = suffix.split('_') %}\n  {% set ns.found = ns.found
-        + [ parts[0] ~ ': ' ~ parts[1:] | join(' ') | title ] %}\n{% endfor %}\n{{
-        ns.found | unique | sort }}"
-      is_zigbee_scene: '{{ zb_options is list and zb_options | count > 0 }}'
-      options: '{{ zb_options if is_zigbee_scene else local_options }}'
-      action_resolved: "{% if action_raw in ['next', 'raise', 'select_next'] %}\n
-        \ {% set idx = options.index(states(target_select)) | default(0, true) + 1
-        %}\n  {{ options[idx] if idx < options | length else options[idx] }}\n{% elif
-        action_raw in ['previous', 'lower', 'select_previous'] %}\n  {% set idx =
-        options.index(states(target_select)) | default(1, true) - 1 %}\n  {{ options[idx]
-        if idx >= 0 else options[-1] }}\n{% elif action_raw in ['off', 'select_first']
-        %}\n  {{ options[0] }}\n{% elif action_raw in ['max', 'select_last'] %}\n
-        \ {{ options[-1] }}\n{% elif action_raw == 'restore' %}\n  {% set active_history
-        = current_history | reject('match', '^0:') | reject('eq', '0') | list %}\n
-        \ {{ active_history[-1] if active_history | length > 0 else (options[1] if
-        options | length > 1 else options[0]) }}\n{% elif action_raw == 'min' %}\n
-        \ {{ options[1] if options | length > 1 else options[0] }}\n{% else %}\n  {%
-        set by_id = options | select('match', '^' ~ action_raw ~ ':') | first | default(none)
-        %}\n  {% set by_name = options | select('search', action_raw) | first | default(none)
-        %}\n  {{ by_id if by_id is not none else (by_name if by_name is not none else
-        action_raw) }}\n{% endif %}"
-      action_is_local: '{{ action_resolved in local_options }}'
-      action_is_zb: '{{ action_resolved in zb_options }}'
-      is_valid_option: '{{ action_is_local or action_is_zb }}'
-      old_is_valid_option: '{{ action_resolved in options }}'
-      parts: '{{ action_resolved.split('': '') if '': '' in action_resolved else [0,
-        action_resolved] }}'
-      scene_id: '{{ parts[0] | int(0) }}'
-      scene_name: '{{ parts[1] | default(''Off'') | title }}'
-  - condition: template
-    value_template: '{{ is_valid_option and target_area != ''none'' }}'
-  - alias: Commit History Stack and Selector Metadata
-    action: mqtt.publish
-    data:
-      topic: homeassistant/select/{{ target_area }}/scene/attributes
-      retain: true
-      payload: "{% set history_update = (current_history + [action_resolved])[-5:]
-        if action_resolved != current_history[-1] | default('') else current_history
-        %} {{ {\n  \"options\": options,\n  \"scene\": {\n    \"scene_id\": scene_id,\n
-        \   \"scene_name\": scene_name\n  },\n  \"friendly_name\": state_attr(target_select,
-        'friendly_name'),\n  \"icon\": state_attr(target_select, 'icon'),\n  \"history_stack\":
-        history_update\n} | tojson }}"
-  - alias: Synchronize Select Component State
-    action: mqtt.publish
-    data:
-      topic: homeassistant/select/{{ target_area }}/scene/state
-      retain: true
-      payload: "{{ {\n  \"name\": scene_name,\n  \"sequence_weight\": scene_id\n}
-        | tojson }}"
-  - alias: Broadcast Clean Scene Vector Token
-    event: ucc_scene_vector_call
-    event_data:
-      area_id: '{{ target_area }}'
-      scene_id: '{{ scene_id }}'
-      scene_name: '{{ scene_name }}'
-      is_zigbee_scene: '{{ is_zigbee_scene }}'
-      source_device: '{{ payload.source_device | default(''ha_ui_selector'') }}'
-  - alias: Log Vector Conversion to Logbook
-    action: logbook.log
-    data:
-      name: UCC Loopback
-      message: 'Resolved command ''{{ action_raw }}'' -> Vector broadcasted: ID {{
-        scene_id }} ({{ scene_name }})'
-      entity_id: '{{ target_select }}'
-  mode: parallel
-  max: 20
 - id: '1781290383283'
   alias: UCC - Scene Vector Coordinator
   description: Parses matrix profile configuration matrices and dispatches abstract
@@ -7045,451 +5969,6 @@
         entity_id: light.powder_room_powder_room_indicator_lights
       data: {}
   mode: single
-- id: '1783969088205'
-  alias: UCC - Loopback Coordinator V2
-  description: Handles relative steering, history tracking registers, and UI selector
-    state loopbacks
-  triggers:
-  - trigger: mqtt
-    id: bus_mqtt
-    enabled: false
-    options:
-      topic: home/universal/bus
-      payload: scene_cycle
-      value_template: '{{ value_json.action_type }}'
-  - trigger: event
-    id: bus_event
-    event_type: universal_controller_command
-    event_data:
-      action_type: scene_cycle
-    enabled: true
-  - trigger: event
-    event_type: call_service
-    event_data:
-      domain: scene
-      service: turn_on
-    id: core_scene_call
-  actions:
-  - variables:
-      is_service_call: '{{ trigger.id == ''core_scene_call'' }}'
-      called_scene_entity: "{% if is_service_call %}\n  {{ trigger.event.data.service_data.entity_id[0]
-        if trigger.event.data.service_data.entity_id is list else trigger.event.data.service_data.entity_id
-        }}\n{% else %}\n  none\n{% endif %}"
-      payload: "{% if trigger.id == 'bus_mqtt' %}\n  {{ trigger.payload_json }}\n{%
-        elif is_service_call %}\n  {{ \n    {\n     'source_device': 'native_core_scene_call',
-        \n     'action_value': called_scene_entity.split('.')[1] \n        | replace(area_id(called_scene_entity)
-        | default('none', true) ~ '_', '')\n        | replace('_', ' ')\n        |
-        title\n    }\n  }}\n{% else %}\n  {{ trigger.event.data }}\n{% endif %}"
-      target_area: "{% if trigger.id == 'bus_mqtt' %}\n  {{ payload.area_key }}\n{%
-        elif is_service_call %}\n  {{ area_id(called_scene_entity) | default('none',
-        true) }}\n{% else %}\n  {{ payload.get('target', {}).get('area_id', 'none')
-        }}\n{% endif %}"
-      action_raw: '{{ payload.action_value | default(''next'') | string }}'
-      target_select: select.{{ target_area }}_matrix_scene
-      current_history: '{{ state_attr(target_select, ''history_stack'') | default([],
-        true) | replace('':'','''') }}'
-      local_options: '{{ state_attr(target_select, ''options'') | default([], true)
-        }}'
-      zb_options: "{% set ns = namespace(found=[]) %}\n{% set prefix = 'scene.' ~
-        target_area ~ '_' %}\n{% for s in states.scene | selectattr('entity_id', 'search',
-        '^' ~ prefix ~ '[0-9]*0_') %}\n  {% set suffix = s.entity_id | replace(prefix,
-        '', 1) %}\n  {% set parts = suffix.split('_') %}\n  {% set ns.found = ns.found
-        + [ parts[0] ~ ' ' ~ parts[1:] | join(' ') | title ] %}\n{% endfor %}\n{{
-        ns.found | unique | sort }}"
-      is_zigbee_scene: '{{ zb_options is list and zb_options | count > 0 }}'
-      options: '{{ zb_options if is_zigbee_scene else local_options }}'
-      t_state: '{{ states(target_select) }}'
-  - variables:
-      action_resolved: "{% if action_raw in ['next', 'raise', 'select_next'] %}\n
-        \ {% set idx = options.index(states(target_select)) | default(0, true) + 1
-        %}\n  {{ options[idx] if idx < options | length else options[idx] }}\n{% elif
-        action_raw in ['previous', 'lower', 'select_previous'] %}\n  {% set idx =
-        options.index(states(target_select)) | default(1, true) - 1 %}\n  {{ options[idx]
-        if idx >= 0 else options[-1] }}\n{% elif action_raw in ['off', 'select_first']
-        %}\n  {{ options[0] }}\n{% elif action_raw in ['max', 'select_last'] %}\n
-        \ {{ options[-1] }}\n{% elif action_raw == 'restore' %}\n  {% set active_history
-        = current_history | reject('match', '^0') | reject('eq', '0') | list %}\n
-        \ {{ active_history[-1] if active_history | length > 0 else (options[1] if
-        options | length > 1 else options[0]) }}\n{% elif action_raw == 'min' %}\n
-        \ {{ options[1] if options | length > 1 else options[0] }}\n{% else %}\n  {%
-        set by_id = options | select('match', '^' ~ action_raw ~ ' ') | first | default(none)
-        %}\n  {% set by_name = options | select('search', action_raw) | first | default(none)
-        %}\n  {{ by_id if by_id is not none else (by_name if by_name is not none else
-        action_raw) }}\n{% endif %}"
-      action_is_local: '{{ action_resolved in local_options }}'
-      action_is_zb: '{{ action_resolved in zb_options }}'
-      is_valid_option: '{{ action_is_local or action_is_zb }}'
-      old_is_valid_option: '{{ action_resolved in options }}'
-      parts: '{{ action_resolved.split('' '') if '' '' in action_resolved else [0,
-        action_resolved] }}'
-      scene_id: '{{ parts[0] | int(0) }}'
-      scene_name: '{{ parts[1] | default(''Off'') | title }}'
-      history_update: "{{ (current_history + [action_resolved])[-5:] if action_resolved
-        != current_history[-1] | default('') else current_history }} \n"
-  - condition: template
-    value_template: '{{ is_valid_option and target_area != ''none'' }}'
-  - alias: Commit History Stack and Selector Metadata
-    action: mqtt.publish
-    data:
-      topic: homeassistant/select/{{ target_area }}/scene/attributes
-      retain: true
-      payload: "{{ {\n  \"options\": options,\n  \"scene\": {\n    \"scene_id\": scene_id,\n
-        \   \"scene_name\": scene_name\n  },\n  \"friendly_name\": state_attr(target_select,
-        'friendly_name'),\n  \"icon\": state_attr(target_select, 'icon'),\n  \"history_stack\":
-        history_update\n} | tojson }}"
-  - alias: Synchronize Select Component State
-    action: mqtt.publish
-    data:
-      topic: homeassistant/select/{{ target_area }}/scene/state
-      retain: true
-      payload: "{{ {\n  \"scene_id\": scene_id,\n   \"scene_name\": scene_name\n}
-        | tojson }}"
-  - condition: template
-    value_template: '{{ not is_service_call }}'
-  - alias: Broadcast Clean Scene Vector Token
-    event: ucc_scene_vector_call
-    event_data:
-      area_id: '{{ target_area }}'
-      scene_id: '{{ scene_id }}'
-      scene_name: '{{ scene_name }}'
-      is_zigbee_scene: '{{ is_zigbee_scene }}'
-      source_device: '{{ payload.source_device | default(''ha_ui_selector'') }}'
-  - alias: Log Vector Conversion to Logbook
-    action: logbook.log
-    data:
-      name: UCC Loopback
-      message: 'Resolved command ''{{ action_raw }}'' -> Vector broadcasted: ID {{
-        scene_id }} ({{ scene_name }})'
-      entity_id: '{{ target_select }}'
-  mode: parallel
-  max: 20
-- id: '1784519452955'
-  alias: GPE - Intent Distributor (V3.2)
-  description: "# GPE - INTENT DISTRIBUTOR (V3.2.0)\n## 1. ARCHITECTURAL CORE Manages
-    Hoisted Multi-Domain Area Intent Registries. Isolates plane logic  (lighting,
-    ventilation, climate) inside dedicated top-level object attributes  on a single
-    area presence entity.\n## 2. VERSION LOGIC (v3.2.0) * **Hoisted Domains**: Stack
-    arrays and expiry calculations are isolated under \n  top-level attributes (`lighting`,
-    `ventilation`, etc.) to protect template simplicity.\n* **Domain Awareness**:
-    Dynamically merges incoming payloads to the specified \n  target `domain` (defaults
-    safely to `lighting`).\n* **Unified Events**: Listens for universal area updates
-    and publishes detailed bus events.\n## 3. PRIORITY LEVELS * **Priority 3**: Schedules
-    (Highest persistence). * **Priority 2**: Manual Overrides (User intervention).
-    * **Priority 1**: Motion/Automation (Standard logic).\n"
-  triggers:
-  - trigger: event
-    event_type: area_registry_update
-  - trigger: event
-    event_type: lighting_registry_update
-  - trigger: event
-    event_type: esphome.area_registry_update
-  - trigger: event
-    event_type: esphome.lighting_registry_update
-  - trigger: event
-    event_type: universal_controller_command
-    event_data:
-      action_type: area_registry_update
-  - trigger: event
-    event_type: universal_controller_command
-    event_data:
-      action_type: lighting_registry_update
-  - trigger: event
-    event_type: universal_controller_command
-    event_data:
-      action_type: light_override
-  - trigger: mqtt
-    id: MQTT_Bus
-    options:
-      topic: home/universal/bus
-      payload: area_registry_update
-      value_template: '{{ value_json.action_type }}'
-  actions:
-  - parallel:
-    - alias: Rate Limited Heartbeat Sync
-      sequence:
-      - condition: template
-        alias: 'Fail-Fast: Rate limit execution to once every 20 seconds'
-        value_template: "{% set last = this.attributes.last_triggered %}  {{ last
-          is none or (now() - last).total_seconds() > 20 }}\n                "
-      - variables:
-          active_intent_count: "{% set registries = label_entities('lights_off') |
-            expand %}\n{% set ns = namespace(count=0) %}\n{% for r in registries %}\n
-            \ {# Heartbeat checks active intents across the baseline lighting domain
-            #}\n  {% set l_block = r.attributes.get('lighting', {}) %}\n  {% set stack
-            = l_block.get('intent_stack', []) %}\n  {% if stack | selectattr('expiry',
-            'defined') \n             | rejectattr('expiry', 'in', [none, '']) \n
-            \            | rejectattr('locked', 'eq', true)\n             | list |
-            count > 0 %}\n    {% set ns.count = ns.count + 1 %}\n  {% endif %}\n{%
-            endfor %}\n{{ ns.count }}"
-      - event: gpe_heartbeat_sync
-        event_data:
-          active_intent_count: '{{ active_intent_count }}'
-          reason: '{{ ''registry_distribution_complete'' if active_intent_count ==
-            0 else ''intent_updated'' }}
-
-            '
-    - alias: Main Process Block
-      sequence:
-      - variables:
-          p: '{{ (trigger.payload | from_json) if trigger.platform == ''mqtt'' else
-            trigger.event.data }}'
-          target_area: '{% set t = p.get(''target'', {}) %} {{ t.get(''area_id'',
-            p.get(''area_key'', p.get(''target_area'',''none''))) }}'
-          val: "{% set t = p.get('target', {}) %} \n{{ t.get('label_id') | default(p.get('target_label'),
-            true) }}"
-          target_labels: '{{ ( [val] if val is string else val) }}
-
-            '
-          domain: '{{ p.get(''domain'', ''lighting'') | string }}'
-          action_type: '{{ p.action_type | default(''area_registry_update'') }}'
-          is_valid_mqtt: '{{ trigger.platform != ''mqtt'' or action_type in [''area_registry_update'',
-            ''lighting_registry_update'', ''light_override''] }}'
-      - condition: template
-        value_template: '{{ is_valid_mqtt and target_area is not none }}'
-      - variables:
-          action: '{{ p.action | default(''add'') }}'
-          cid: '{{ p.claimant_id | default(''system'') | string }}'
-          intent_type: '{{ p.intent_type | default(''motion'') | string }}'
-          local_registry: sensor.{{ target_area }}_presence_intent
-          current_stack: "{% set target_dom = domain %}\n{% set dom_block = state_attr(local_registry,
-            target_dom) %}\n{% set root_stack = state_attr(local_registry, 'intent_stack')
-            %}\n\n{# 1. Check if V3.2 hoisted domain block exists #}\n{% if dom_block
-            is mapping and 'intent_stack' in dom_block %}\n  {% set raw_stack = dom_block.get('intent_stack',
-            []) %}\n{# 2. Fallback to V2 root stack if targeting lighting #}\n{% elif
-            target_dom == 'lighting' and root_stack is sequence %}\n  {% set raw_stack
-            = root_stack %}\n{% else %}\n  {% set raw_stack = [] %}\n{% endif %}\n\n{%
-            set ns = namespace(cleaned=[]) %}  \n{% for item in raw_stack %}\n  {%
-            set c_id = item.get('claimant_id') %}\n  {% set exp = item.get('expiry')
-            %}\n  {% set is_expired = (exp is not none and exp != 'none' and exp |
-            string != '' and as_timestamp(exp) < as_timestamp(now())) %}\n  \n  {#
-            Retain token if it has a valid claimant_id and is active or locked #}\n
-            \ {% if c_id is not none and (not is_expired or item.get('locked', false)
-            or exp is none) %}\n    {% set ns.cleaned = ns.cleaned + [item] %}\n  {%
-            endif %}\n{% endfor %}  \n\n{# Output strictly as JSON string so downstream
-            Jinja converts it back into a native Python list #}\n{{ ns.cleaned | tojson
-            }}"
-      - variables:
-          raw_stack: "\n{% if dom_block is mapping and 'intent_stack' in dom_block
-            %}\n  {{ dom_block.get('intent_stack', []) }}\n{% elif domain == 'lighting'
-            and 'intent_stack' in existing_attributes %}\n  {{ existing_attributes.get('intent_stack',
-            []) }}\n{% else %}\n  {{ [] }}\n{% endif %}"
-        enabled: false
-      - variables:
-          current_stack: "{% set ns = namespace(cleaned=[]) %}  \n{% for item in raw_stack
-            %}\n  {% set c_id = item.claimant_id %}\n  {% set exp = item.get('expiry')
-            %}\n  {% set is_expired = (exp is not none and exp != 'none' and exp |
-            string != '' and as_timestamp(exp) < as_timestamp(now())) %}\n  \n  {%
-            if c_id is not none and (not is_expired or item.get('locked', false) or
-            exp is none) %}\n    {% set ns_item = namespace(new_dict={'claimant_id':
-            c_id}) %}\n    {% for key, value in item.items() if key not in ['claimant',
-            'claimant_id'] %}\n      {% set ns_item.new_dict = dict(ns_item.new_dict,
-            **{key: value}) %}\n    {% endfor %}\n    {% set ns.cleaned = ns.cleaned
-            + [ns_item.new_dict] %}\n  {% endif %}\n{% endfor %}  \n{{ ns.cleaned
-            }}"
-        enabled: false
-      - variables:
-          base_attributes: "{% if is_v2_structure %}\n  {% set ns = namespace(clean={})
-            %}\n  {% for k, v in existing_attributes.items() if k not in ['expiry',
-            'intent_stack'] %}\n    {% set ns.clean = dict(ns.clean, **{k: v}) %}\n
-            \ {% endfor %}\n  {{ ns.clean }}\n{% else %}\n  {{ existing_attributes
-            }}\n{% endif %}"
-          current_stack: "{% if domain == 'lighting' and is_v2_structure %}\n  {#
-            V2 MIGRATION PATH: Pull the legacy root stack into lighting #}\n  {% set
-            raw_stack = existing_attributes.get('intent_stack', []) %}\n{% else %}\n
-            \ {# V3.2 PATH: Read from the hoisted domain block #}\n  {% set domain_block
-            = existing_attributes.get(domain, {}) %}\n  {% set raw_stack = domain_block.get('intent_stack',
-            []) if domain_block is mapping else [] %}\n{% endif %}\n\n{% set ns =
-            namespace(cleaned=[]) %}  \n{% for item in raw_stack %}\n  {% set c_id
-            = item.claimant_id if 'claimant_id' in item else item.get('claimant')
-            %}\n  {% set exp = item.get('expiry') %}\n  {% set is_expired = (exp is
-            not none and exp != 'none' and exp | string != '' and as_timestamp(exp)
-            < as_timestamp(now())) %}\n  \n  {% if c_id is not none and (not is_expired
-            or item.get('locked', false) or exp is none) %}\n    {% set ns_item =
-            namespace(new_dict={'claimant_id': c_id}) %}\n    {% for key, value in
-            item.items() if key not in ['claimant', 'claimant_id'] %}\n      {% set
-            ns_item.new_dict = dict(ns_item.new_dict, **{key: value}) %}\n    {% endfor
-            %}\n    {% set ns.cleaned = ns.cleaned + [ns_item.new_dict] %}\n  {% endif
-            %}\n{% endfor %}  \n{{ ns.cleaned }}"
-        enabled: false
-      - variables:
-          domain_raw: '{{ existing_attributes.get(domain, {}) }}'
-          current_stack: "{# Read intent_stack from the targeted hoisted domain block
-            #}\n{% set raw_stack = domain_raw.get('intent_stack', []) %}  \n{% set
-            ns = namespace(cleaned=[]) %}  \n\n{% for item in raw_stack %}\n  {% set
-            c_id = item.claimant_id if 'claimant_id' in item else item.get('claimant')
-            %}\n  {% set exp = item.get('expiry') %}\n  {% set is_expired = (exp is
-            not none and exp != 'none' and exp | string != '' and as_timestamp(exp)
-            < as_timestamp(now())) %}\n  \n  {% if c_id is not none and (not is_expired
-            or item.get('locked', false) or exp is none) %}\n    {% set ns_item =
-            namespace(new_dict={'claimant_id': c_id}) %}\n    {% for key, value in
-            item.items() if key not in ['claimant', 'claimant_id'] %}\n      {% set
-            ns_item.new_dict = dict(ns_item.new_dict, **{key: value}) %}\n    {% endfor
-            %}\n    {% set ns.cleaned = ns.cleaned + [ns_item.new_dict] %}\n  {% endif
-            %}\n{% endfor %}  \n{{ ns.cleaned }}"
-        enabled: false
-      - choose:
-        - alias: Add, Lock, Override
-          conditions:
-          - condition: template
-            value_template: '{{ action in [''add'', ''lock'', ''override''] or action_type
-              == ''light_override'' }}'
-          sequence:
-          - variables:
-              is_off_cmd: '{{ action_type == ''light_override'' and p.action_value
-                == ''off'' }}'
-              is_schedule: '{{ (action_type == ''schedule'' or action == ''schedule''
-                or p.intent_type == ''schedule'') }}
-
-                '
-              is_override: '{{ (action_type == ''light_override'' or action == ''override''
-                or p.intent_type == ''override'') }}'
-              intent_type: '{{ ''override'' if is_override else (p.intent_type | default(''motion''))
-                }}'
-              priority: '{{ 3 if is_schedule else ( 2 if is_override else (p.priority
-                | default(1) | int)) }}'
-              existing: '{{ current_stack | selectattr(''claimant_id'', ''eq'', cid)
-                | first | default({}) }}'
-              new_stack: "{% \n  set active_list = (current_stack | from_json) if
-                current_stack is string else current_stack \n%}\n{% set registry =
-                state_attr('sensor.global_variable_registry', 'vars') | default({},
-                true) %}\n{% set g_env = registry.get('globals', {}).get('environmental',
-                {}) %}\n{% set dur_work = g_env.get('override_duration_work', 36000)
-                | int %}\n{% set dur_std = g_env.get('override_duration_standard',
-                3600) | int %}\n\n{% if is_off_cmd %}\n  {{ active_list | rejectattr('type',
-                'eq', 'override') | rejectattr('claimant_id', 'eq', cid) | list }}\n{%
-                else %}\n  {% set explicit_lock = p.locked if p.locked is defined
-                else none %}\n  {% set final_lock = false %}\n  {% if action == 'lock'
-                %}\n    {% set final_lock = true %}\n  {% elif explicit_lock is not
-                none %}\n    {% set final_lock = explicit_lock in ['true', true, 'on',
-                'ON'] %}\n  {% else %}\n    {% set final_lock = existing.get('locked',
-                false) %}\n  {% endif %}\n\n  {% set expiry = none %}\n  {% set seconds
-                = p.seconds | default(-2) | int %}\n  \n  {% if not final_lock %}\n
-                \   {% if seconds == -1 %}\n      {% set expiry = none %}\n    {%
-                elif seconds != -2 %}\n      {% set default_secs = 30 if 'door' in
-                cid else 120 %}\n      {% set final_seconds = seconds if seconds >=
-                0 else default_secs %}\n      {% set expiry = (now() + timedelta(seconds=final_seconds)).isoformat()
-                %}\n    {% elif is_schedule %}\n      {% set current_posture = states('sensor.posture_horizons')
-                %}\n      {% set hz = state_attr('sensor.posture_horizons', 'horizons')
-                | default({}, true) %}\n      {% if current_posture == 'morning' %}\n
-                \       {% set expiry = hz.morning_end %}\n      {% elif current_posture
-                == 'evening' %}\n        {% set expiry = hz.evening_end %}\n      {%
-                elif current_posture == 'night' %}\n        {% set expiry = hz.night_end
-                %}\n      {% else %}\n        {% set expiry = (now() + timedelta(hours=1)).isoformat()
-                %}\n      {% endif %}\n    {% elif is_override %}\n      {% if seconds
-                != -2 %}\n        {% set is_work_area = ('work' in (labels(target_area)
-                | default([], true))) %}\n        {% set expiry = (now() + timedelta(seconds=(p.seconds
-                | default(dur_work if is_work_area else dur_std) | int))).isoformat()
-                %}\n      {% else %}\n        {% set expiry = none %}\n      {% endif
-                %}\n    {% else %}\n      {% set default_secs = 30 if 'door' in cid
-                else 120 %}\n      {% set final_seconds = seconds if seconds >= 0
-                else default_secs %}\n      {% set expiry = (now() + timedelta(seconds=final_seconds)).isoformat()
-                %}\n    {% endif %}\n  {% endif %}\n\n  {% set entry = {\n    'type':
-                intent_type,\n    'claimant_id': cid,\n    'priority': priority,\n
-                \   'expiry': expiry,\n    'locked': final_lock,\n    'action_value':
-                p.action_value | default('manual' if is_override else ''),\n    'warned':
-                false,\n    'skip_warning': (p.skip_warning in ['true', true] or intent_type
-                != 'motion' or final_lock),\n    'target_labels': target_labels,\n
-                \   'last_updated': now().isoformat()\n  } %}\n  {% set others = active_list
-                | rejectattr('claimant_id', 'eq', cid) | list %}\n  {{ others + [entry]
-                }}\n{% endif %}"
-        - alias: Remove
-          conditions:
-          - condition: template
-            value_template: '{{ action == ''remove'' }}'
-          sequence:
-          - variables:
-              new_stack: '{% set active_list = (current_stack | from_json) if current_stack
-                is string else current_stack %}
-
-                {{ active_list | rejectattr(''claimant_id'', ''eq'', cid) | list }}'
-        - alias: Purge
-          conditions:
-          - condition: template
-            value_template: '{{ action == ''purge'' }}'
-          sequence:
-          - variables:
-              new_stack: []
-        - alias: Warn
-          conditions:
-          - condition: template
-            value_template: '{{ action == ''warned'' }}'
-          sequence:
-          - variables:
-              new_stack: "{% set active_list = (current_stack | from_json) if current_stack
-                is string else current_stack %}\n{% set ns = namespace(stk=[]) %}\n{%
-                for i in active_list %}\n  {% if i.claimant_id == cid %}\n    {% set
-                ns.stk = ns.stk + [dict(i, warned=true, last_updated=now().isoformat(),
-                expiry=(now() + timedelta(seconds=20)).isoformat())] %}\n  {% else
-                %}\n    {% set ns.stk = ns.stk + [i] %}\n  {% endif %}\n{% endfor
-                %}\n{{ ns.stk }}"
-      - variables:
-          top_expiry: "{% if new_stack is defined and new_stack | length > 0 %}\n
-            \ {% set ns_hold = namespace(active=false) %}\n  {% for item in new_stack
-            %}\n    {% if item.expiry in [none, null, 'none', 'null', 'infinite',
-            ''] or item.locked == true %}\n      {% set ns_hold.active = true %}\n
-            \   {% endif %}\n  {% endfor %}\n\n  {% if ns_hold.active %}\n    none\n
-            \ {% else %}\n    {% set ns_tokens = namespace(valid=[]) %}\n    {% for
-            item in new_stack %}\n      {% set item_exp = as_datetime(item.expiry)
-            %}\n      {% if item_exp is not none and item_exp > now() %}\n        {%
-            set lock_score = 1000000 if item.locked else 0 %}\n        {% set priority_score
-            = (item.priority | default(1) | int) * 10000 %}\n        {% set weight
-            = lock_score + priority_score + as_timestamp(item_exp) %}\n        {%
-            set ns_tokens.valid = ns_tokens.valid + [{'expiry': item.expiry, 'weight':
-            weight}] %}\n      {% endif %}\n    {% endfor %}\n\n    {% if ns_tokens.valid
-            | length > 0 %}\n      {% set winner = ns_tokens.valid | sort(attribute='weight',
-            reverse=true) | first %}\n      {{ winner.expiry }}\n    {% else %}\n
-            \     none\n    {% endif %}\n  {% endif %}\n{% else %}\n  none\n{% endif
-            %}"
-          domain_state: "{% set stack_count = new_stack | count %}\n{% set winner
-            = new_stack | sort(attribute='priority', reverse=true) \n   | sort(attribute='locked',
-            reverse=true) \n   | first | default({}) %}\n\n{% if stack_count == 0
-            %}\n  idle\n{% elif winner.get('locked', false) %}\n  locked\n{% elif
-            top_expiry is none or top_expiry == 'none' %}\n  active\n{% else %}\n
-            \ {% set t_diff = as_timestamp(top_expiry) - as_timestamp(now()) %}\n
-            \ {% if t_diff <= 0 %}\n    expired\n  {% elif t_diff <= 120 %}\n    expiring\n
-            \ {% else %}\n    active\n  {% endif %}\n{% endif %}"
-          updated_domain_payload: "{{ {\n  'state': domain_state,\n  'expiry': top_expiry,\n
-            \ 'intent_stack': new_stack,\n  'last_updated': now().isoformat()\n} }}"
-          existing_attributes: '{{ states[local_registry].attributes if states[local_registry]
-            is not none else {} }}'
-          final_attributes: "{% set attrs = existing_attributes if existing_attributes
-            is mapping else {} %} {{ dict(attrs, **{\n  domain: updated_domain_payload,\n
-            \ 'last_claimant': cid,\n  'last_updated': now().isoformat()\n}) }}"
-      - action: mqtt.publish
-        data:
-          topic: homeassistant/sensor/{{ target_area }}/presence/attributes
-          payload: '{{ final_attributes | tojson }}'
-          retain: true
-      - action: mqtt.publish
-        data:
-          topic: homeassistant/sensor/{{ target_area }}/presence/state
-          payload: '{{ final_attributes.get(''lighting'', {}).get(''state'', ''idle'')
-            }}'
-          retain: true
-      - alias: Project State to Local Event Bus
-        event: presence_state_update
-        event_data:
-          area_id: '{{ target_area }}'
-          domain: '{{ domain }}'
-          state: "{% set ns_lock = namespace(active=false) %}\n{% if new_stack is
-            defined and new_stack | length > 0 %}\n  {% for item in new_stack %}\n
-            \   {% if item.expiry in [none, null, 'none', 'null', 'infinite', '']
-            or item.locked == true %}\n      {% set ns_lock.active = true %}\n    {%
-            endif %}\n  {% endfor %}\n{% endif %}\n\n{% if ns_lock.active %}\n  ACTIVE\n{%
-            elif new_stack | length > 0 and top_expiry is not none and top_expiry
-            !=\n'none' and top_expiry | string != '' %}\n  {{ 'COOLDOWN' if as_timestamp(top_expiry)
-            - as_timestamp(now()) > 0 else 'EVICTED' }}\n{% else %}\n  EVICTED\n{%
-            endif %}"
-          last_claimant: '{{ cid }}'
-          last_intent_type: '{{ intent_type }}'
-          expiry_ttl: "{% if top_expiry is not none and top_expiry != 'none' and top_expiry
-            | string != '' %}\n  {% set delta = as_timestamp(top_expiry) - as_timestamp(now())
-            %}\n  {{ delta | round(3) if delta > 0 else 0 }}\n{% else %}\n  0\n{%
-            endif %}"
-  mode: parallel
-  max: 20
-  trace:
-    stored_traces: 50
 - id: '1784528172900'
   alias: GPE - Stateful Batching Janitor (V3.2)
   description: '# GPE - STATEFUL BATCHING JANITOR (V3.2.0)
@@ -8168,8 +6647,8 @@
     - alias: Presence Update (Motion Reset)
       conditions:
       - condition: template
-        value_template: '{{ is_presence and is_on and not is_area_locked and (not
-          has_door or not is_door_closed) }}'
+        value_template: '{{ is_presence and is_on and is_presence_policy_active and
+          not is_area_locked and (not has_door or not is_door_closed) }}'
       sequence:
       - event: area_registry_update
         event_data:
@@ -8288,288 +6767,6 @@
   mode: parallel
   variables: {}
   max: 50
-  trace:
-    stored_traces: 50
-- id: '1784560750317'
-  alias: GPE - Intent Distributor (V3.3)
-  description: "# GPE - INTENT DISTRIBUTOR (V3.3.0)\n## 1. ARCHITECTURAL CORE Manages
-    Hoisted Multi-Domain Area Intent Registries. Isolates plane logic  (lighting,
-    ventilation, climate) inside dedicated top-level object attributes  on a single
-    area presence entity.\n## 2. VERSION LOGIC (v3.2.0) * **Hoisted Domains**: Stack
-    arrays and expiry calculations are isolated under \n  top-level attributes (`lighting`,
-    `ventilation`, etc.) to protect template simplicity.\n* **Domain Awareness**:
-    Dynamically merges incoming payloads to the specified \n  target `domain` (defaults
-    safely to `lighting`).\n* **Unified Events**: Listens for universal area updates
-    and publishes detailed bus events.\n## 3. PRIORITY LEVELS * **Priority 3**: Schedules
-    (Highest persistence). * **Priority 2**: Manual Overrides (User intervention).
-    * **Priority 1**: Motion/Automation (Standard logic).\n"
-  triggers:
-  - trigger: event
-    event_type: area_registry_update
-  - trigger: event
-    event_type: lighting_registry_update
-  - trigger: event
-    event_type: esphome.area_registry_update
-  - trigger: event
-    event_type: esphome.lighting_registry_update
-  - trigger: event
-    event_type: universal_controller_command
-    event_data:
-      action_type: area_registry_update
-  - trigger: event
-    event_type: universal_controller_command
-    event_data:
-      action_type: lighting_registry_update
-  - trigger: event
-    event_type: universal_controller_command
-    event_data:
-      action_type: light_override
-  - trigger: mqtt
-    id: MQTT_Bus
-    options:
-      topic: home/universal/bus
-      payload: area_registry_update
-      value_template: '{{ value_json.action_type }}'
-  actions:
-  - parallel:
-    - alias: Rate Limited Heartbeat Sync
-      sequence:
-      - condition: template
-        alias: 'Fail-Fast: Rate limit execution to once every 20 seconds'
-        value_template: "{% set last = this.attributes.last_triggered %}  {{ last
-          is none or (now() - last).total_seconds() > 20 }}\n                "
-      - variables:
-          active_intent_count: "{% set registries = label_entities('lights_off') |
-            expand %}\n{% set ns = namespace(count=0) %}\n{% for r in registries %}\n
-            \ {# Heartbeat checks active intents across the baseline lighting domain
-            #}\n  {% set l_block = r.attributes.get('lighting', {}) %}\n  {% set stack
-            = l_block.get('intent_stack', []) %}\n  {% if stack | selectattr('expiry',
-            'defined') \n             | rejectattr('expiry', 'in', [none, '']) \n
-            \            | rejectattr('locked', 'eq', true)\n             | list |
-            count > 0 %}\n    {% set ns.count = ns.count + 1 %}\n  {% endif %}\n{%
-            endfor %}\n{{ ns.count }}"
-      - event: gpe_heartbeat_sync
-        event_data:
-          active_intent_count: '{{ active_intent_count }}'
-          reason: '{{ ''registry_distribution_complete'' if active_intent_count ==
-            0 else ''intent_updated'' }}
-
-            '
-    - alias: Main Process Block
-      sequence:
-      - variables:
-          p: '{{ (trigger.payload | from_json) if trigger.platform == ''mqtt'' else
-            trigger.event.data }}'
-          target_area: '{% set t = p.get(''target'', {}) %} {{ t.get(''area_id'',
-            p.get(''area_key'', p.get(''target_area'',''none''))) }}'
-          val: "{% set t = p.get('target', {}) %} \n{{ t.get('label_id') | default(p.get('target_label'),
-            true) }}"
-          target_labels: '{{ ( [val] if val is string else val) }}
-
-            '
-          domain: '{{ p.get(''domain'', ''lighting'') | string }}'
-          action_type: '{{ p.action_type | default(''area_registry_update'') }}'
-          is_valid_mqtt: '{{ trigger.platform != ''mqtt'' or action_type in [''area_registry_update'',
-            ''lighting_registry_update'', ''light_override''] }}'
-      - condition: template
-        value_template: '{{ is_valid_mqtt and target_area is not none }}'
-      - variables:
-          action: '{{ p.action | default(''add'') }}'
-          cid: '{{ p.claimant_id | default(''system'') | string }}'
-          intent_type: '{{ p.intent_type | default(''motion'') | string }}'
-          local_registry: sensor.{{ target_area }}_presence_intent
-          current_stack: "{% set target_dom = domain %}\n{% set dom_block = state_attr(local_registry,
-            target_dom) %}\n{% set root_stack = state_attr(local_registry, 'intent_stack')
-            %}\n\n{# 1. Check if V3.2 hoisted domain block exists #}\n{% if dom_block
-            is mapping and 'intent_stack' in dom_block %}\n  {% set raw_stack = dom_block.get('intent_stack',
-            []) %}\n{# 2. Fallback to V2 root stack if targeting lighting #}\n{% elif
-            target_dom == 'lighting' and root_stack is sequence %}\n  {% set raw_stack
-            = root_stack %}\n{% else %}\n  {% set raw_stack = [] %}\n{% endif %}\n\n{%
-            set ns = namespace(cleaned=[]) %}  \n{% for item in raw_stack %}\n  {%
-            set c_id = item.get('claimant_id') %}\n  {% set exp = item.get('expiry')
-            %}\n  {% set is_expired = (exp is not none and exp != 'none' and exp |
-            string != '' and as_timestamp(exp) < as_timestamp(now())) %}\n  \n  {#
-            Retain token if it has a valid claimant_id and is active or locked #}\n
-            \ {% if c_id is not none and (not is_expired or item.get('locked', false)
-            or exp is none) %}\n    {% set ns.cleaned = ns.cleaned + [item] %}\n  {%
-            endif %}\n{% endfor %}  \n\n{# Output strictly as JSON string so downstream
-            Jinja converts it back into a native Python list #}\n{{ ns.cleaned | tojson
-            }}"
-      - choose:
-        - alias: Add, Lock, Override
-          conditions:
-          - condition: template
-            value_template: '{{ action in [''add'', ''lock'', ''override''] or action_type
-              == ''light_override'' }}'
-          sequence:
-          - variables:
-              is_off_cmd: '{{ action_type == ''light_override'' and p.action_value
-                == ''off'' }}'
-              is_schedule: '{{ (action_type == ''schedule'' or action == ''schedule''
-                or p.intent_type == ''schedule'') }}
-
-                '
-              is_override: '{{ (action_type == ''light_override'' or action == ''override''
-                or p.intent_type == ''override'') }}'
-              intent_type: '{{ ''override'' if is_override else (p.intent_type | default(''motion''))
-                }}'
-              priority: '{{ 3 if is_schedule else ( 2 if is_override else (p.priority
-                | default(1) | int)) }}'
-              existing: '{{ current_stack | selectattr(''claimant_id'', ''eq'', cid)
-                | first | default({}) }}'
-              new_stack: "{% \n  set active_list = (current_stack | from_json) if
-                current_stack is string else current_stack \n%}\n{% set registry =
-                state_attr('sensor.global_variable_registry', 'vars') | default({},
-                true) %}\n{% set g_env = registry.get('globals', {}).get('environmental',
-                {}) %}\n{% set dur_work = g_env.get('override_duration_work', 36000)
-                | int %}\n{% set dur_std = g_env.get('override_duration_standard',
-                3600) | int %}\n\n{% if is_off_cmd %}\n  {{ active_list | rejectattr('type',
-                'eq', 'override') | rejectattr('claimant_id', 'eq', cid) | list }}\n{%
-                else %}\n  {% set explicit_lock = p.locked if p.locked is defined
-                else none %}\n  {% set final_lock = false %}\n  {% if action == 'lock'
-                %}\n    {% set final_lock = true %}\n  {% elif explicit_lock is not
-                none %}\n    {% set final_lock = explicit_lock in ['true', true, 'on',
-                'ON'] %}\n  {% else %}\n    {% set final_lock = existing.get('locked',
-                false) %}\n  {% endif %}\n\n  {% set expiry = none %}\n  {% set seconds
-                = p.seconds | default(-2) | int %}\n  \n  {% if not final_lock %}\n
-                \   {% if seconds == -1 %}\n      {% set expiry = none %}\n    {%
-                elif seconds != -2 %}\n      {% set default_secs = 30 if 'door' in
-                cid else 120 %}\n      {% set final_seconds = seconds if seconds >=
-                0 else default_secs %}\n      {% set expiry = (now() + timedelta(seconds=final_seconds)).isoformat()
-                %}\n    {% elif is_schedule %}\n      {% set current_posture = states('sensor.posture_horizons')
-                %}\n      {% set hz = state_attr('sensor.posture_horizons', 'horizons')
-                | default({}, true) %}\n      {% if current_posture == 'morning' %}\n
-                \       {% set expiry = hz.morning_end %}\n      {% elif current_posture
-                == 'evening' %}\n        {% set expiry = hz.evening_end %}\n      {%
-                elif current_posture == 'night' %}\n        {% set expiry = hz.night_end
-                %}\n      {% else %}\n        {% set expiry = (now() + timedelta(hours=1)).isoformat()
-                %}\n      {% endif %}\n    {% elif is_override %}\n      {% if seconds
-                != -2 %}\n        {% set is_work_area = ('work' in (labels(target_area)
-                | default([], true))) %}\n        {% set expiry = (now() + timedelta(seconds=(p.seconds
-                | default(dur_work if is_work_area else dur_std) | int))).isoformat()
-                %}\n      {% else %}\n        {% set expiry = none %}\n      {% endif
-                %}\n    {% else %}\n      {% set default_secs = 30 if 'door' in cid
-                else 120 %}\n      {% set final_seconds = seconds if seconds >= 0
-                else default_secs %}\n      {% set expiry = (now() + timedelta(seconds=final_seconds)).isoformat()
-                %}\n    {% endif %}\n  {% endif %}\n\n  {% set entry = {\n    'type':
-                intent_type,\n    'claimant_id': cid,\n    'priority': priority,\n
-                \   'expiry': expiry,\n    'locked': final_lock,\n    'action_value':
-                p.action_value | default('manual' if is_override else ''),\n    'warned':
-                false,\n    'skip_warning': (p.skip_warning in ['true', true] or intent_type
-                != 'motion' or final_lock),\n    'target_labels': target_labels,\n
-                \   'last_updated': now().isoformat()\n  } %}\n  {% set others = active_list
-                | rejectattr('claimant_id', 'eq', cid) | list %}\n  {{ others + [entry]
-                }}\n{% endif %}"
-        - alias: Remove
-          conditions:
-          - condition: template
-            value_template: '{{ action == ''remove'' }}'
-          sequence:
-          - variables:
-              new_stack: '{% set active_list = (current_stack | from_json) if current_stack
-                is string else current_stack %}
-
-                {{ active_list | rejectattr(''claimant_id'', ''eq'', cid) | list }}'
-        - alias: Purge
-          conditions:
-          - condition: template
-            value_template: '{{ action == ''purge'' }}'
-          sequence:
-          - variables:
-              new_stack: []
-        - alias: Warn
-          conditions:
-          - condition: template
-            value_template: '{{ action == ''warned'' }}'
-          sequence:
-          - variables:
-              new_stack: "{% set active_list = (current_stack | from_json) if current_stack
-                is string else current_stack %}\n{% set ns = namespace(stk=[]) %}\n{%
-                for i in active_list %}\n  {% if i.claimant_id == cid %}\n    {% set
-                ns.stk = ns.stk + [dict(i, warned=true, last_updated=now().isoformat(),
-                expiry=(now() + timedelta(seconds=20)).isoformat())] %}\n  {% else
-                %}\n    {% set ns.stk = ns.stk + [i] %}\n  {% endif %}\n{% endfor
-                %}\n{{ ns.stk }}"
-      - variables:
-          top_expiry: "{% if new_stack is defined and new_stack | length > 0 %}\n
-            \ {% set ns_hold = namespace(active=false) %}\n  {% for item in new_stack
-            %}\n    {% if item.expiry in [none, null, 'none', 'null', 'infinite',
-            ''] or item.locked == true %}\n      {% set ns_hold.active = true %}\n
-            \   {% endif %}\n  {% endfor %}\n\n  {% if ns_hold.active %}\n    none\n
-            \ {% else %}\n    {% set ns_tokens = namespace(valid=[]) %}\n    {% for
-            item in new_stack %}\n      {% set item_exp = as_datetime(item.expiry)
-            %}\n      {% if item_exp is not none and item_exp > now() %}\n        {%
-            set lock_score = 1000000 if item.locked else 0 %}\n        {% set priority_score
-            = (item.priority | default(1) | int) * 10000 %}\n        {% set weight
-            = lock_score + priority_score + as_timestamp(item_exp) %}\n        {%
-            set ns_tokens.valid = ns_tokens.valid + [{'expiry': item.expiry, 'weight':
-            weight}] %}\n      {% endif %}\n    {% endfor %}\n\n    {% if ns_tokens.valid
-            | length > 0 %}\n      {% set winner = ns_tokens.valid | sort(attribute='weight',
-            reverse=true) | first %}\n      {{ winner.expiry }}\n    {% else %}\n
-            \     none\n    {% endif %}\n  {% endif %}\n{% else %}\n  none\n{% endif
-            %}"
-          domain_state: "{% set stack_count = new_stack | count %}\n{% set winner
-            = new_stack | sort(attribute='priority', reverse=true) \n   | sort(attribute='locked',
-            reverse=true) \n   | first | default({}) %}\n\n{% if stack_count == 0
-            %}\n  idle\n{% elif winner.get('locked', false) %}\n  locked\n{% elif
-            top_expiry is none or top_expiry == 'none' %}\n  active\n{% else %}\n
-            \ {% set t_diff = as_timestamp(top_expiry) - as_timestamp(now()) %}\n
-            \ {% if t_diff <= 0 %}\n    expired\n  {% elif t_diff <= 120 %}\n    expiring\n
-            \ {% else %}\n    active\n  {% endif %}\n{% endif %}"
-          updated_domain_payload: "{{ {\n  'state': domain_state,\n  'expiry': top_expiry,\n
-            \ 'intent_stack': new_stack,\n  'last_updated': now().isoformat()\n} }}"
-          safe_claimant_id: '{{ target_claimant_id | default(source_entity | default(''system'',
-            true), true) }}'
-          final_attributes: "{% set target_dom = domain | default('lighting', true)
-            %}\n{# Safely access the attributes map directly from the entity state
-            object #} {% set reg_state = states[local_registry] if local_registry
-            in states else none %} {% set raw_attrs = reg_state.attributes if reg_state
-            is not none else {} %}\n{% set ns = namespace(doms={}) %}\n{# 1. Safely
-            iterate over native attributes on local_registry to preserve sibling domains
-            #} {% if raw_attrs is mapping %}\n  {% for k, v in raw_attrs.items() if
-            k is string %}\n    {% if not k.startswith('_') and k not in ['last_claimant',
-            'last_updated', 'friendly_name', 'icon', 'restored', 'supported_features',
-            'entity_id'] and v is mapping %}\n      {% set ns.doms = dict(ns.doms,
-            **{k: v}) %}\n    {% endif %}\n  {% endfor %}\n{% endif %}\n{# 2. Merge
-            target domain payload #} {% set updated_doms = dict(ns.doms, **{target_dom:
-            updated_domain_payload}) %}\n{# 3. Re-attach top-level metadata safely
-            #} {% set result = dict(\n  last_claimant=safe_claimant_id,\n  last_updated=now().isoformat(),\n
-            \ **updated_doms\n) %}\n{{ result }}"
-      - action: mqtt.publish
-        data:
-          topic: homeassistant/sensor/{{ target_area }}/presence/attributes
-          payload: '{{ final_attributes | tojson }}'
-          retain: true
-      - action: mqtt.publish
-        data:
-          topic: homeassistant/sensor/{{ target_area }}/presence/state
-          payload: '{% set attr = final_attributes if final_attributes is mapping
-            else (final_attributes | from_json | default({}, true)) %} {% set target_dom
-            = domain | default(''lighting'', true) %} {{ attr.get(target_dom, {}).get(''state'',
-            ''idle'') }}'
-          retain: true
-      - alias: Project State to Local Event Bus
-        event: presence_state_update
-        event_data:
-          area_id: '{{ target_area }}'
-          domain: '{{ domain }}'
-          state: "{% set ns_lock = namespace(active=false) %}\n{% if new_stack is
-            defined and new_stack | length > 0 %}\n  {% for item in new_stack %}\n
-            \   {% if item.expiry in [none, null, 'none', 'null', 'infinite', '']
-            or item.locked == true %}\n      {% set ns_lock.active = true %}\n    {%
-            endif %}\n  {% endfor %}\n{% endif %}\n\n{% if ns_lock.active %}\n  ACTIVE\n{%
-            elif new_stack | length > 0 and top_expiry is not none and top_expiry
-            !=\n'none' and top_expiry | string != '' %}\n  {{ 'COOLDOWN' if as_timestamp(top_expiry)
-            - as_timestamp(now()) > 0 else 'EVICTED' }}\n{% else %}\n  EVICTED\n{%
-            endif %}"
-          last_claimant: '{{ cid }}'
-          last_intent_type: '{{ intent_type }}'
-          expiry_ttl: "{% if top_expiry is not none and top_expiry != 'none' and top_expiry
-            | string != '' %}\n  {% set delta = as_timestamp(top_expiry) - as_timestamp(now())
-            %}\n  {{ delta | round(3) if delta > 0 else 0 }}\n{% else %}\n  0\n{%
-            endif %}"
-  mode: parallel
-  max: 20
   trace:
     stored_traces: 50
 - id: '1784571070062'
@@ -8702,12 +6899,12 @@
               existing: "{% \n  set active_list = (current_stack ) if current_stack
                 is string else current_stack \n%} \n{{ active_list | selectattr('claimant_id',
                 'eq', cid) | first | default({}) }}"
-              new_stack: "{% set active_list = (current_stack ) if current_stack is
-                string else current_stack %}\n{% set registry = state_attr('sensor.global_variable_registry',
-                'vars') | default({}, true) %} {% set g_env = registry.get('globals',
-                {}).get('environmental', {}) %} {% set dur_work = g_env.get('override_duration_work',
-                36000) | int %} {% set dur_std = g_env.get('override_duration_standard',
-                3600) | int %}\n{% if is_off_cmd %}\n  {{ active_list | rejectattr('type',
+              new_stack: "{%\n  set active_list = (current_stack ) if current_stack
+                is string else current_stack \n%} \n{%\n  set registry = state_attr('sensor.global_variable_registry',
+                'vars') | default({}, true) \n%}   \n{%\n  set g_env = registry.get('globals',
+                {}).get('environmental', {}) \n%}  \n{%\n  set dur_work = g_env.get('override_duration_work',
+                36000) | int \n%}  \n{% \n  set dur_std = g_env.get('override_duration_standard',
+                3600) | int \n%}\n{% if is_off_cmd %}\n  {{ active_list | rejectattr('type',
                 'eq', 'override') | rejectattr('claimant_id', 'eq', cid) | list }}\n{%
                 else %}\n  {% set explicit_lock = p.locked if p.locked is defined
                 else none %}\n  {% set final_lock = false %}\n  {% if action == 'lock'
@@ -9001,19 +7198,6 @@
       name: ESPHome Area Context Sync
   mode: queued
   max: 10
-- id: '1785277745021'
-  alias: Which Scene was called
-  description: ''
-  triggers:
-  - trigger: scene.activated
-    target:
-      floor_id:
-      - ground
-      - basement
-    options: {}
-  conditions: []
-  actions: []
-  mode: single
 - id: '1785373624509'
   alias: UCC - Loopback Coordinator V2.5
   description: Handles relative steering, history tracking registers, and UI selector
@@ -9024,18 +7208,20 @@
     event_type: universal_controller_command
     event_data:
       action_type: scene_cycle
-    enabled: true
+    enabled: false
   - trigger: event
     event_type: call_service
     event_data:
       domain: scene
       service: turn_on
     id: core_scene_call
+    enabled: false
   - trigger: select.selection_changed
     target:
       label_id: scene
     options: {}
     id: option_change
+    enabled: false
   actions:
   - variables:
       is_service_call: '{{ trigger.id == ''core_scene_call'' }}'
@@ -9148,3 +7334,204 @@
   conditions: []
   actions: []
   mode: single
+- id: '1785697644369'
+  alias: UCC - Loopback Coordinator V3 (Native Scenes)
+  description: Unified router for relative steering, posture-aware scene shifting,
+    history tracking, and native scene execution.
+  triggers:
+  - trigger: event
+    id: bus_event
+    event_type: universal_controller_command
+    event_data:
+      action_type: scene_cycle
+    enabled: true
+  - trigger: event
+    event_type: call_service
+    event_data:
+      domain: scene
+      service: turn_on
+    id: core_scene_call
+  - trigger: select.selection_changed
+    target:
+      label_id: scene
+    id: option_change
+  actions:
+  - variables:
+      is_service_call: '{{ trigger.id == ''core_scene_call'' }}'
+      is_option_change: '{{ trigger.id == ''option_change'' }}'
+      called_scene_entity: "{% if is_service_call %}\n  {{ trigger.event.data.service_data.entity_id[0]
+        if trigger.event.data.service_data.entity_id is list else trigger.event.data.service_data.entity_id
+        }}\n{% else %}\n  none\n{% endif %}"
+      payload: "{% if is_service_call %}\n\n  {% set area = area_id(called_scene_entity)
+        | default('none', true) %}\n  {% set parts = called_scene_entity.split('.')[1].replace(area
+        ~ '_', '').split('_') %}\n    \n  {{\n    {\n    'source_device': 'native_core_scene_call',\n
+        \   'target': {'area_id': area}, \n    'action_value': parts[0] ~ ' ' ~ (parts[1:]
+        | join(' ') | title)\n    }\n  }}\n{% elif is_option_change %}\n  {{\n    {\n
+        \   'source_device': 'native_select_option',\n    'target': {'area_id': area_id(trigger.to_state.entity_id)},
+        \n    'action_value': trigger.to_state.state\n    }\n  }}\n{% else %}\n  {{
+        trigger.event.data }}\n{% endif %}"
+      target_area: '{{ payload.get(''target'', {}).get(''area_id'', ''none'') }}'
+      action_raw: '{{ payload.action_value | default(''next'') | string }}'
+      target_select: select.{{ target_area }}_matrix_scene
+      current_history: '{{ state_attr(target_select, ''history_stack'') | default([],
+        true) | replace('':'','''') }}'
+      options: "{% set ns = namespace(found=[]) %}\n{% set prefix = 'scene.' ~ target_area
+        ~ '_' %}\n{% for s in states.scene | selectattr('entity_id', 'search', '^'
+        ~ prefix ~ '[0-9]*0_') %}\n  {% set suffix = s.entity_id | replace(prefix,
+        '', 1) %}\n  {% set parts = suffix.split('_') %}\n  {% set ns.found = ns.found
+        + [ parts[0] ~ ' ' ~ parts[1:] | join(' ') | title ] %}\n{% endfor %}\n    \n{{
+        ns.found | unique | sort }}"
+      t_state: '{{ states(target_select) }}'
+  - variables:
+      action_resolved: "{% if action_raw in ['next', 'raise', 'select_next'] %}\n
+        \ {% set idx = options.index(t_state) | default(0, true) + 1 %}\n  {{ options[idx]
+        if idx < options | length else options[idx] }}\n{% elif action_raw in ['previous',
+        'lower', 'select_previous'] %}\n  {% set idx = options.index(t_state) | default(1,
+        true) - 1 %}\n  {{ options[idx] if idx >= 0 else options[-1] }}\n{% elif action_raw
+        in ['off', 'select_first'] %}\n  {{ options[0] if options | length > 0 else
+        '0 Off' }}\n{% elif action_raw in ['max', 'select_last'] %}\n  {{ options[-1]
+        if options | length > 0 else '0 Off' }}\n{% elif action_raw == 'restore' %}\n
+        \ {% set active_history = current_history \n     | reject('match', '^0')\n
+        \    | reject('eq', '0') \n     | list %}\n  {{ active_history[-1] if active_history
+        | length > 0 else (options[1] if options | length > 1 else options[0]) }}\n{%
+        elif action_raw == 'min' %}\n  {{ options[1] if options | length > 1 else
+        options[0] }}\n{% else %}\n  {% set by_id = options | select('match', '^'
+        ~ action_raw ~ ' ') | first | default(none) %}\n  {% set by_name = options
+        | select('search', action_raw) | first | default(none) %}\n  {{ by_id if by_id
+        is not none else (by_name if by_name is not none else action_raw) }}\n{% endif
+        %}"
+      is_valid_option: '{{ action_resolved in options }}'
+      parts: '{{ action_resolved.split('' '') if '' '' in action_resolved else [0,
+        action_resolved] }}'
+      scene_id: '{{ parts[0] | int(0) }}'
+      scene_name: '{{ parts[1:] | join('' '') | default(''Off'') | title }}'
+      history_update: '{{ (current_history + [action_resolved])[-5:] if action_resolved
+        != current_history[-1] | default('''') else current_history }}'
+  - condition: template
+    value_template: '{{ is_valid_option and target_area != ''none'' }}'
+  - variables:
+      current_posture: '{% set registry = state_attr(''sensor.global_variable_registry'',
+        ''vars'') | default({}, true) %}{% set g_logic = registry.get(''globals'',{}).get(''environmental'',{})
+        %}{{ states(g_logic.get(''home_posture'', '''')) | default(''disarmed'', true)
+        }}'
+      posture_offset_map:
+        disarmed: 0
+        armed_night: 5
+        armed_away: 1
+      offset: '{{ posture_offset_map.get(current_posture, 0) | default(0) | int }}'
+      base_id: '{{ scene_id }}'
+      night_shift_id: '{{ base_id + offset }}'
+      night_prefix: '{{ ''scene.'' ~ target_area ~ ''_'' ~ night_shift_id ~ ''_''
+        }}'
+      base_prefix: '{{ ''scene.'' ~ target_area ~ ''_'' ~ base_id ~ ''_'' }}'
+      base_entity: '{{ states.scene | selectattr(''entity_id'', ''search'', ''^''
+        ~ base_prefix) | map(attribute=''entity_id'') | first | default(none) }}'
+      night_entity: '{{ states.scene | selectattr(''entity_id'', ''search'', ''^''
+        ~ night_prefix) | map(attribute=''entity_id'') | first | default(base_entity)
+        }}'
+      matched_scene: '{{ night_entity if night_entity is not none else base_entity
+        }}'
+  - if:
+    - condition: template
+      value_template: '{{ not is_service_call }}'
+    then:
+    - action: scene.turn_on
+      target:
+        entity_id: '{{ matched_scene }}'
+  - action: mqtt.publish
+    data:
+      topic: homeassistant/select/{{ target_area }}/scene/attributes
+      retain: true
+      payload: '{{ {''options'': options, ''scene'': {''scene_id'': base_id, ''scene_name'':
+        scene_name}, ''friendly_name'': state_attr(target_select, ''friendly_name''),
+        ''icon'': state_attr(target_select, ''icon''), ''history_stack'': history_update}
+        | tojson }}'
+  - action: mqtt.publish
+    data:
+      topic: homeassistant/select/{{ target_area }}/scene/state
+      retain: true
+      payload: '{{ {''scene_id'': base_id, ''scene_name'': scene_name} | tojson }}'
+  - action: logbook.log
+    data:
+      name: UCC Loopback V3
+      message: Resolved command '{{ action_raw }}' -> Activated native scene '{{ matched_scene
+        }}' for area [{{ area_name(target_area) }}]
+      entity_id: '{{ target_select }}'
+  mode: parallel
+  max: 20
+- id: '1785843783418'
+  alias: GPE - Area Context Synchronizer (V1.5)
+  triggers:
+  - event_type: esphome.gpe_area_request_update
+    id: Switch_Request
+    trigger: event
+  - entity_id:
+    - sensor.global_variable_registry
+    id: Broadcast
+    trigger: state
+  conditions: []
+  actions:
+  - variables:
+      target_area: "{% if trigger.id == 'Switch_Request' %}\n  {{ trigger.event.data.area_id
+        | default('none') }}\n{% elif trigger.id == 'Broadcast' %}\n  {{ trigger.payload_json.target.area_id
+        | default('none') }}\n{% else %}\n  {{ area_id(trigger.entity_id) | default('none')
+        }}\n{% endif %}"
+      target_device_name: "{% if trigger.id == 'Switch_Request' %}\n  {{ trigger.event.data.device_name
+        | default(target_area ~ '_switch') }}\n{% else %}\n  {{ target_area ~ '_switch'
+        }}\n{% endif %}"
+      target_esphome_service: esphome.{{ target_device_name | replace('-', '_') }}_gpe_area_update
+      profile_sensor: sensor.{{ target_area }}_profile
+      profile_exists: '{{ states(profile_sensor) not in [''unknown'', ''unavailable'']
+        }}'
+      profile_topography: '{{ state_attr(profile_sensor, ''topography'') | default({},
+        true) }}'
+      profile_features: '{{ state_attr(profile_sensor, ''features'') | default({},
+        true) }}'
+      target_area_scene_sensor: select.{{ target_area }}_matrix_scene
+      profile_scenes: '{{ state_attr(target_area_scene_sensor, ''options'') | default({},
+        true) }}'
+      current_history: '{{ state_attr(target_area_scene_sensor, ''history_stack'')
+        | default([], true) }}'
+      profile_scene_last: "{% set active_history = current_history \n     | reject('match',
+        '^0')\n     | reject('eq', '0') \n     | list %}\n  {{ active_history[-1]
+        if active_history | length > 0 else (profile_scenes[1] if profile_scenes |
+        length > 1 else profile_scenes[0]) }}"
+      parts: '{{ profile_scene_last.split('' '') if '' '' in profile_scene_last else
+        [0, profile_scene_last] }}'
+      scene_id: '{{ parts[0] | int(10) }}'
+      scene_name: '{{ parts[1:] | join('' '') | default(''Off'') | title }}'
+      profile_timeouts: '{{ state_attr(profile_sensor, ''timeouts'') | default({},
+        true) }}'
+      door_entities: '{{ profile_topography.get(''door_entities'', []) }}'
+      door_entity: '{{ door_entities | first | default(''none'') }}'
+      has_door: '{{ door_entity != ''none'' and states(door_entity) not in [''unknown'',
+        ''unavailable''] }}'
+      door_mqtt_topic: "{% if has_door %}\n  {{ device_name(door_entity) | default(area_name(target_area)
+        ~ ' Door') }}\n{% else %}\n  none\n{% endif %}"
+      root_topic: '{{ profile_topography.get(''root_topic'', ''zigbee2mqtt'') }}'
+      light_topic: '{{ device_name(profile_topography.get(''light_entities'', [area_name(target_area)]
+        ) | first ) }}'
+      fan_topic: '{{ device_name(profile_topography.get(''fan_entities'', [area_name(target_area)
+        ~ '' Fan'']) | first ) }}'
+  - condition: template
+    value_template: '{{ target_area != ''none'' and profile_exists }}'
+  - action: '{{ target_esphome_service }}'
+    data:
+      area_id: '{{ target_area }}'
+      root_topic: '{{ root_topic }}'
+      light_topic: '{{ light_topic }}'
+      fan_topic: '{{ fan_topic }}'
+      door_topic: '{{ door_mqtt_topic }}'
+      scene_eligible: '{{ profile_features.get(''scene_eligible'', true) }}'
+      use_scene: '{{ profile_features.get(''use_scene'', true) }}'
+      light_on_scene: '{{ scene_id }}'
+      light_off_scene: '{{ 0 | int }}'
+      light_sec: '{{ profile_timeouts.get(''light_sec'', 120) | int }}'
+      fan_sec: '{{ profile_timeouts.get(''fan_sec'', 300) | int }}'
+  - action: logbook.log
+    data:
+      message: 'GPE Context Synced -> Area: {{ target_area }} | Target Action: {{
+        target_esphome_service }}'
+      name: ESPHome Area Context Sync
+  mode: queued
+  max: 10
