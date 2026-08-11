@@ -554,6 +554,7 @@
     event_type: lutron_caseta_button_event
     event_data:
       action: press
+    enabled: false
   conditions:
   - condition: template
     value_template: '{{ not is_owned or is_expired }}'
@@ -3350,18 +3351,31 @@
       event_type:
       - 'on'
       - 'off'
-      - brightness_step_down
-      - brightness_step_up
-  - trigger: state
-    entity_id:
-    - sensor.basement_stairs_remote2_action
-    - sensor.basement_stairs_remote1_action
-  conditions: []
+    id: OnOff
+  - trigger: mqtt
+    options:
+      topic: zigbee2mqtt/+/action
+    id: UpDown
+  conditions:
+  - condition: template
+    value_template: "{% if trigger.id == 'UpDown' %}\n  {% set device_name = trigger.topic.split('/')[1]
+      %}\n  {% set dev_id = device_id(device_name) %}\n  {# Ensure the MQTT device
+      actually has the 'remote' label #}\n  {% set is_remote = dev_id and 'remote'
+      in labels(dev_id) %}\n  {% set p = trigger.payload | replace('brightness_step_','')
+      %}\n  {{ is_remote and p in ['on', 'off', 'up', 'down'] }}\n{% else %}\n  {%
+      set p = trigger.to_state.attributes.event_type %}\n  {{ p in ['on', 'off'] }}\n{%
+      endif %}\n"
   actions:
   - variables:
-      area_id: '{{ area_id(trigger.entity_id) | default('''') }}'
-      event_type: '{{ trigger.to_state.attributes.event_type }}'
-    enabled: false
+      event_type: '{{ trigger.payload | replace(''brightness_step_'','''') if trigger.id
+        == ''UpDown'' else trigger.to_state.attributes.event_type }}'
+      area_id: '{{ area_id(device_id(trigger.topic.split(''/'')[1])) if trigger.id
+        ==
+
+        ''UpDown'' else area_id(trigger.entity_id) }}
+
+        '
+    enabled: true
   - choose:
     - conditions:
       - condition: template
@@ -3391,7 +3405,8 @@
         metadata: {}
         target:
           entity_id: select.{{ area_id }}_matrix_scene
-        data: {}
+        data:
+          cycle: false
       alias: Up Pressed
     - conditions:
       - condition: template
@@ -3401,10 +3416,12 @@
         metadata: {}
         target:
           entity_id: select.{{ area_id }}_matrix_scene
-        data: {}
+        data:
+          cycle: false
       alias: Down Pressed
-    enabled: false
-  mode: single
+    enabled: true
+  mode: parallel
+  max: 10
 - id: '1779585892212'
   alias: Switch Amryl Office Main Switch Event
   description: Single press detection for Amryl Office Main Light
@@ -4703,6 +4720,7 @@
       label_id: light_schedule
     options: {}
     id: light_schedule_change
+    enabled: true
   conditions:
   - condition: template
     value_template: "{{ trigger.id in ['area_change', 'light_schedule_change'] or\n
@@ -4723,14 +4741,13 @@
         \ {% elif trigger.id == 'device_change' and data.device_id is defined and
         device_attr(data.device_id, 'area_id') is not none %}\n    {{ device_attr(data.device_id,
         'area_id') }}\n  {% else %}\n    none\n  {% endif %}\n{% endif %}"
+      is_scene: "{% if trigger.id == 'entity_change' %}\n  {% set entity_id = trigger.event.data.entity_id
+        %}\n  {% set domain = entity_id.split('.')[0] %}\n  {{ domain == 'scene' }}\n{%
+        else %}\n  false\n{% endif %}"
   - choose:
     - conditions:
       - condition: template
-        value_template: '{% set entity_id = trigger.event.data.entity_id %}
-
-          {% set domain = entity_id.split(''.'')[0] %}
-
-          {{ domain == ''scene'' }}'
+        value_template: is_scene
       sequence:
       - variables:
           appId: scene
@@ -4862,6 +4879,9 @@
         topic: homeassistant/sensor/{{ target_area }}/profile/state
         payload: '{{ now().isoformat() }}'
         retain: true
+    - event: update_schedule_posture
+      event_data:
+        area_id: '{{ target_area }}'
   trace:
     stored_traces: 50
 - id: '1780938638553'
@@ -4929,6 +4949,10 @@
     entity_id:
     - sensor.schedule_posture
     to:
+    id: SunPositionChange
+  - trigger: event
+    event_type: update_schedule_posture
+    id: UpdatePosture
   conditions: []
   actions:
   - variables:
@@ -4936,9 +4960,11 @@
         'vars')\n  | default({}, true) %}\n{% set g_env = registry.get('globals',
         {}).get('environmental', {}) %}\n\n{{ states(g_env.schedule_posture) | default('daylight',
         true) }}\n"
+      area_list: "{{\n  areas() if trigger.id != 'UpdatePosture' else [trigger.event.data.area_id]
+        | default(areas())\n}}\n"
   - parallel:
     - repeat:
-        for_each: '{{ areas() }}'
+        for_each: '{{ area_list }}'
         sequence:
         - variables:
             target_area: '{{ repeat.item }}'
@@ -4952,10 +4978,13 @@
             profile_posture: '{{ profile_policy_map.get(current_posture, ''none'')
               }}'
             use_scene: '{{ profile_features.get(''scene_eligible'', true) }}'
-            previous_posture: '{{ profile_policy_map.get( trigger.from_state.state,
-              ''daylight'' ) }}
+            previous_posture: '{% set trig = trigger if trigger is defined else {}
+              %}
 
-              '
+              {% set old_state = trig.from_state if trig.from_state is defined else
+              {''state'': ''unknown''} %}
+
+              {{ profile_policy_map.get( old_state.state, ''unknown'' ) }}'
         - choose:
           - conditions:
             - condition: template
@@ -6558,7 +6587,8 @@
     - alias: Presence Cleared (Handover)
       conditions:
       - condition: template
-        value_template: '{{ is_presence and not is_on and not is_area_locked }}'
+        value_template: '{{ is_presence and is_presence_policy_active and not is_on
+          and not is_area_locked }}'
       sequence:
       - alias: Lighting Set Turn Off
         choose:
@@ -7088,6 +7118,21 @@
       click_type: '{{ trigger.event.data.event_value | default(''press'') }}'
       domain: '{{ trigger.event.data.domain | default(''lighting'') }}'
       is_eligible: '{{ target_area in label_areas(''area_override_eligible'') }}'
+      profile_sensor: sensor.{{ target_area }}_profile
+      profile_exists: '{{ states(profile_sensor) not in [''unknown'', ''unavailable'']
+        }}'
+      profile_topography: '{{ state_attr(profile_sensor, ''topography'') | default({},
+        true) }}'
+      profile_policy_map: '{{ state_attr(profile_sensor, ''policy_map'') | default({},
+        true) }}'
+      profile_features: '{{ state_attr(profile_sensor, ''features'') | default({},
+        true) }}'
+      use_scene: '{{ profile_features.get(''scene_eligible'', true) }}'
+      target_select: select.{{ target_area }}_matrix_scene
+      current_history: '{{ state_attr(target_select, ''history_stack'') | default([],
+        true) }}'
+      current_scene: '{{ state_attr(target_select, ''scene'') | default({}, true)
+        }}'
       action_map:
         press:
           type: light_call
@@ -7382,6 +7427,9 @@
         + [ parts[0] ~ ' ' ~ parts[1:] | join(' ') | title ] %}\n{% endfor %}\n    \n{{
         ns.found | unique | sort }}"
       t_state: '{{ states(target_select) }}'
+      temp_parts: '{{ action_raw.replace(''5'', ''0'') }}
+
+        '
   - variables:
       action_resolved: "{% if action_raw in ['next', 'raise', 'select_next'] %}\n
         \ {% set idx = options.index(t_state) | default(0, true) + 1 %}\n  {{ options[idx]
@@ -7395,9 +7443,10 @@
         \    | reject('eq', '0') \n     | list %}\n  {{ active_history[-1] if active_history
         | length > 0 else (options[1] if options | length > 1 else options[0]) }}\n{%
         elif action_raw == 'min' %}\n  {{ options[1] if options | length > 1 else
-        options[0] }}\n{% else %}\n  {% set by_id = options | select('match', '^'
-        ~ action_raw ~ ' ') | first | default(none) %}\n  {% set by_name = options
-        | select('search', action_raw) | first | default(none) %}\n  {{ by_id if by_id
+        options[0] }}\n{% else %}\n  {% set parts = action_raw.split(' ') %}\n  {%
+        set by_id = options | select('match', '^' ~ action_raw.replace('5', '0') )
+        | first | default(none) %}\n  {% set by_name = options | select('search',
+        action_raw.replace('5', '0') ) | first | default(none) %}\n  {{ by_id if by_id
         is not none else (by_name if by_name is not none else action_raw) }}\n{% endif
         %}"
       is_valid_option: '{{ action_resolved in options }}'
@@ -7534,4 +7583,2777 @@
         target_esphome_service }}'
       name: ESPHome Area Context Sync
   mode: queued
+  max: 10
+- id: '1786151403257'
+  alias: GPE - Orchestrator (V8.2)
+  description: "# GPE - ORCHESTRATOR (V8.2) \nDecision engine for environmental presence.
+    V3.2 Domain-Aware Architecture.\n## 1. CORE PURPOSE\nActs as the central decision
+    engine for environmental presence. Fully  integrated with the Priority Intent
+    Stack (Registry V3.2 Hoisted Domains).\n## 2. ARCHITECTURAL LOGIC\n* **Priority
+    Intent Integration**: All presence events are tagged with \n  `intent_type: motion`
+    and `domain: lighting` to ensure they interact \n  correctly with multi-layered
+    domain stacks.\n  \n* **Standardized Handshake**: Uses `claimant_id` as the primary
+    identifier \n  to align with Registry V3.2 standards.\n  \n* **The Handover Pattern**:
+    When high-precision presence clears, the system \n  automatically hands over to
+    a 120s motion-type timer instead of immediate \n  removal, preventing jarring
+    light cut-offs.\n\n* **The Gatekeeper Pattern**: Suppresses redundant commands
+    if the room \n  is already in the desired state and filters false-positives via
+    \n  Ghost/Veto logic.\n\nDecision engine for environmental presence.\n* **Priority
+    Intent Integration**: All presence events are tagged with \n  `intent_type: motion`
+    to ensure they interact correctly with the \n  multi-layered priority stack.\n
+    \ \n* **Standardized Handshake**: Uses `claimant_id` as the primary identifier
+    \n  to align with Registry v6.1 and Cleaner v2.1 standards.\n  \n* **The Handover
+    Pattern**: When high-precision presence clears, the system \n  automatically hands
+    over to a 120s motion-type timer instead of immediate \n  removal, preventing
+    jarring light cut-offs.\n\n* **The Gatekeeper Pattern**: Suppresses redundant
+    commands if the room \n  is already in the desired state and filters false-positives
+    via \n  Ghost/Veto logic.\n\n## 3. VERSION HISTORY\n* **V6.0**: Implemented area
+    specific registers for static and configuration items\n* **V5.0**: Implemented
+    'Purpose-specific triggers' and 'Label-based targets'  Added the MQTT trigger
+    to allow for Reolink person sensors to be triggers without having the Reolink
+    integration installed.\n* **V3.0**: Implemented schduled lighting via lighting
+    schedule template sensor.\n* **V2.4**: Implemented conditional 'seconds' (30s
+    for door-only transitions).\n* **V2.3.5**: Fixed Safety Unlock to use explicit
+    'add' for grace period.\n* **V2.3.3**: Hardened Presence Update/Cleared aliases
+    to strictly ignore \n  locked areas. Prevents motion-off events from overwriting
+    infinite locks.\n\n* **V2.3.2**: Refined Valid Turn On to ignore door events if
+    area is locked.\n  Prevents race conditions between Portal Turn On and Safety
+    Unlock.\n\n* **V2.3.1**: Relaxed door_age restriction in should_lock_area. \n
+    \ Allows locking if motion is sustained while the door is closed, \n  even if
+    the door closure was >120s ago.\n\n* **V2.3**: Removed 'Presence Off' from should_unlock_area
+    to prevent \n  premature unlocking when motion clears in locked zones.\n  \n*
+    **V2.2**: Fix Modified should_unlock_area to transition to a 30s grace period
+    instead  of immediate removal to prevent instant blackouts when doors open.\n*
+    **V2.1**: Standardized on `claimant_id`. Implemented 120s \"Handover\" logic for
+    cleared presence. Restored missing Door Timer and Motion Reset logic. \n* **V2.0**:
+    Implemented Multi-Tenant Ownership tracking. Standardized event \n  schema for
+    Registry v5.7 compatibility.\n  \n* **V1.5**: Updated attribute paths to `active_intents`.
+    Standardized \n  `intent_type` as 'motion' for all presence-based additions."
+  triggers:
+  - trigger: motion.cleared
+    target:
+      label_id: presence
+    options:
+      behavior: each
+      for:
+        hours: 0
+        minutes: 0
+        seconds: 10
+  - trigger: motion.detected
+    target:
+      label_id: presence
+    options:
+      behavior: each
+  - trigger: occupancy.cleared
+    target:
+      label_id: presence
+    options:
+      behavior: each
+  - trigger: occupancy.detected
+    target:
+      label_id: presence
+    options:
+      behavior: each
+  - trigger: door.closed
+    target:
+      label_id: door
+    options:
+      behavior: each
+      for:
+        hours: 0
+        minutes: 0
+        seconds: 5
+  - trigger: door.opened
+    target:
+      label_id: door
+    options:
+      behavior: each
+  - trigger: mqtt
+    options:
+      topic: home/sensor/+/person
+    id: Broadcast
+    enabled: false
+  conditions: []
+  actions:
+  - variables:
+      source_entity: "{% if trigger.id == 'Broadcast' %}\n  {{ trigger.payload_json.target.entity_id
+        | default('none') }}\n{% else %}\n  {{ trigger.entity_id | default('none')
+        }}\n{% endif %}\n"
+      target_area: "{% if trigger.id == 'Broadcast' %}\n  {{ trigger.payload_json.target.area_id
+        | default('none') }}\n{% else %}\n  {{ area_id(source_entity) | default('none')
+        }}\n{% endif %}"
+      entity_labels: "{% if trigger.id == 'Broadcast' %}\n  {{ trigger.payload_json.target.label_id
+        | default([]) }}\n{% else %}\n  {{ labels(source_entity) | default([]) }}\n{%
+        endif %}"
+      profile_sensor: sensor.{{ target_area }}_profile
+      profile_exists: '{{ states(profile_sensor) not in [''unknown'', ''unavailable'']
+        }}'
+      profile_topography: '{{ state_attr(profile_sensor, ''topography'') | default({},
+        true) }}'
+      profile_policy_map: '{{ state_attr(profile_sensor, ''policy_map'') | default({},
+        true) }}'
+      profile_features: '{{ state_attr(profile_sensor, ''features'') | default({},
+        true) }}'
+      door_entities: '{{ profile_topography.get(''door_entities'', []) }}'
+      presence_entities: '{{ profile_topography.get(''presence_entities'', []) }}'
+      fan_entities: '{{ profile_topography.get(''fan_entities'', []) }}'
+      door_entity: '{{ door_entities | first | default(''none'') }}'
+      has_door: '{{ door_entity != ''none'' and states(door_entity) not in [''unknown'',
+        ''unavailable''] }}'
+      presence_entity: '{{ presence_entities | first | default(''none'') }}'
+      fan_entity: '{{ fan_entities | first | default(''none'') }}'
+      has_presence: '{{ presence_entity != ''none'' }}'
+      has_fan: '{{ fan_entity != ''none'' }}'
+      door_state: '{{ states(door_entity) if has_door else ''none'' }}'
+      is_door_closed: '{{ is_state(door_entity, ''off'') if has_door else false }}'
+      door_age: '{{ as_timestamp(now()) - as_timestamp(states[door_entity].last_changed,
+        0) if has_door else 0 }}'
+      current_posture: '{% set registry = state_attr(''sensor.global_variable_registry'',
+        ''vars'') | default({}, true) %} {% set g_env = registry.get(''globals'',
+        {}).get(''environmental'', {}) %} {{ states(g_env.get(''schedule_posture'',''''))
+        | default(''daylight'', true) }}'
+      profile_posture: "{% set backstop = profile_policy_map.get(current_posture,
+        'none') %} {% set sub_zones_data = state_attr(profile_sensor, 'sub_zones')
+        | default({}, true) %} {% set matched_zone = entity_labels | select('in',
+        sub_zones_data.keys()) | first | default(none) %} {% if matched_zone is not
+        none %}\n  {% set zone_policy = sub_zones_data[matched_zone].get('policy_map',
+        {}).get(current_posture, 'none') %}\n  {{ backstop if zone_policy == 'none'
+        else zone_policy }}\n{% else %}\n  {{ backstop }}\n{% endif %}"
+      is_on: '{{ is_state(source_entity, ''on'') }}'
+      is_presence: '{{ ''presence'' in entity_labels or ''person'' in entity_labels
+        or source_entity in presence_entities }}'
+      is_presence_policy_active: '{{ (profile_posture == ''presence'' or profile_posture
+        == ''on'') }}'
+      is_door: '{{ ''door'' in entity_labels or source_entity in door_entities }}'
+      is_entrance: '{{ ''entrance'' in entity_labels }}'
+      use_scene: '{{ profile_features.get(''scene_eligible'', true) }}'
+      target_select: select.{{ target_area }}_matrix_scene
+      current_history: '{{ state_attr(target_select, ''history_stack'') | default([],
+        true) }}'
+      current_scene: '{{ state_attr(target_select, ''scene'') | default({}, true)
+        }}'
+      is_lock_zone: '{{ profile_features.get(''lock_eligible'', false) }}'
+      use_night_settings: '{% set registry = state_attr(''sensor.global_variable_registry'',
+        ''vars'') | default({}, true) %} {% set g_env = registry.get(''globals'',
+        {}).get(''environmental'', {}) %} {{ profile_features.get(''night_light'',
+        false) and is_state(g_env.night_posture_sensor, ''on'') }}
+
+        '
+      final_target_label: "{% if use_night_settings %} \n  {{ ['night_light'] }} \n{%
+        else %}\n  {% set sub_zones_data = state_attr(profile_sensor, 'sub_zones')
+        | default({}, true) %}\n  {% set matched_zone = entity_labels | select('in',
+        sub_zones_data.keys()) | first | default(none) %}\n  {% if matched_zone is
+        not none %}\n    {{ [matched_zone] }}\n  {% else %}\n    {{ ['main'] }}\n
+        \ {% endif %}\n{% endif %}"
+      adjoining_area: '{{ profile_topography.get(''peer_area'', ''none'') }}'
+      local_registry: sensor.{{ target_area }}_presence_intent
+      current_stack: "{% set dom_block = state_attr(local_registry, 'lighting') %}\n{%
+        set root_stack = state_attr(local_registry, 'intent_stack') %}\n{% if dom_block
+        is mapping and 'intent_stack' in dom_block %}\n  {{ dom_block.get('intent_stack',
+        []) }}\n{% elif root_stack is sequence %}\n  {{ root_stack }}\n{% else %}\n
+        \ {{ [] }}\n{% endif %}"
+      locked_intent: '{{ (current_stack | from_json) | selectattr(''locked'', ''eq'',
+        true) | first | default(none) if current_stack is string else current_stack
+        | selectattr(''locked'', ''eq'', true) | first | default(none) }}'
+      is_area_locked: '{{ locked_intent is not none }}'
+      locked_claimant_id: '{{ locked_intent.claimant_id if is_area_locked else ''none''
+        }}'
+      area_context:
+        area_id: '{{ target_area }}'
+        posture: '{{ current_posture }}'
+        profile_posture: '{{ profile_posture }}'
+        final_label: '{{ final_target_label }}'
+        is_door_closed: '{{ is_door_closed }}'
+        door_age: '{{ door_age | int }}'
+        is_locked: '{{ is_area_locked }}'
+        use_scene: '{{ use_scene }}'
+        profile_features: '{{ profile_features }}'
+        profile_topography: '{{ profile_topography }}'
+      hvac_action: '{% set registry = state_attr(''sensor.global_variable_registry'',
+        ''vars'') | default({}, true) %} {% set g_hvac = registry.get(''globals'',
+        {}).get(''hvac'', {}) %} {{ state_attr(g_hvac.get(''primary_unit'',''climate.my_ecobee''),
+        ''hvac_action'') | default(''idle'') }}'
+      hvac_is_active: '{{ hvac_action in [''heating''] }}'
+      is_ghost: '{{ has_door and is_presence and is_on and is_door_closed and not
+        is_area_locked and (door_age > 600 or hvac_is_active) and is_lock_zone }}'
+      should_lock_area: "{% set active_stack = (current_stack | from_json) if current_stack
+        is string else current_stack %}\n{{ \n  is_lock_zone and \n  is_presence and
+        \n  is_on and \n  is_door_closed and \n  not is_area_locked and \n  (door_age
+        < 120 or (active_stack | selectattr('type', 'eq', 'motion') | list | count
+        > 0)) \n}}"
+      should_unlock_area: '{{ is_area_locked and ((is_door and is_on) or (has_door
+        and not is_door_closed and door_age < 5)) }}'
+      should_trigger_peer: '{{ is_door and is_on and target_area != ''none'' and adjoining_area
+        != ''none'' }}'
+  - variables:
+      target_select: select.{{ target_area }}_matrix_scene
+      raw_scene: '{{ states(target_select) }}'
+      is_room_off: '{% set s = raw_scene %} {{ s is defined and (s == ''0'' or s.startswith(''0:''))
+        }}
+
+        '
+      call_scene: '{{ is_room_off and is_presence_policy_active and is_on and use_scene
+        }}'
+      call_off_scene: '{{ not is_room_off and is_presence_policy_active and not is_on
+        and use_scene }}'
+  - choose:
+    - alias: Veto Log (Ghost Detected)
+      conditions:
+      - condition: template
+        value_template: '{{ is_presence and is_on and is_ghost }}'
+      sequence:
+      - action: logbook.log
+        data:
+          name: GPE VETO
+          message: 'GPE VETO: Ghost in {{ target_area }} (HVAC: {{ hvac_action }},
+            Door Age: {{ door_age | int }}s, Lock Status: {{ is_area_locked}})'
+          entity_id: '{{ source_entity }}'
+    - alias: Lock Presence (Sabbatical)
+      conditions:
+      - condition: template
+        value_template: '{{ should_lock_area and not is_area_locked }}'
+      sequence:
+      - event: area_registry_update
+        event_data:
+          action: lock
+          claimant_id: '{{ door_entity }}'
+          domain: lighting
+          target:
+            area_id: '{{ target_area }}'
+          intent_type: motion
+          area_context: '{{ area_context }}'
+        enabled: false
+      - if:
+        - condition: template
+          value_template: '{{ not use_scene }}'
+        then:
+        - event: universal_controller_command
+          event_data:
+            action_type: light_call
+            command_input: turn_on
+            target:
+              area_id: '{{ target_area }}'
+              label_id: '{{ final_target_label }}'
+            action_value: '{{ ''night_mode'' if use_night_settings else ''day_mode''
+              }}'
+            metadata:
+              action: lock
+              claimant_id: '{{ door_entity }}'
+              intent_type: motion
+              domain: lighting
+            area_context: '{{ area_context }}'
+            source_device: '{{ source_entity }}'
+        else:
+        - event: area_registry_update
+          event_data:
+            action: lock
+            claimant_id: '{{ door_entity }}'
+            domain: lighting
+            target:
+              area_id: '{{ target_area }}'
+              label_id: '{{ final_target_label }}'
+            intent_type: motion
+            area_context: '{{ area_context }}'
+            source_device: '{{ source_entity }}'
+        - event: universal_controller_command
+          event_data:
+            action_type: scene_cycle
+            target:
+              area_id: '{{ target_area }}'
+            action_value: restore
+            metadata:
+              publish_intent: lock
+              claimant_id: '{{ source_entity }}'
+              intent_type: motion
+              domain: lighting
+            area_context: '{{ area_context }}'
+            source_device: '{{ source_entity }}'
+          enabled: true
+      - choose:
+        - conditions:
+          - condition: template
+            value_template: '{{ has_fan }}'
+          sequence:
+          - action: fan.turn_on
+            metadata: {}
+            target:
+              entity_id: '{{ fan_entities }}'
+            data: {}
+          - event: area_registry_update
+            event_data:
+              action: lock
+              claimant_id: '{{ door_entity }}'
+              domain: ventilation
+              target:
+                area_id: '{{ target_area }}'
+              intent_type: motion
+              area_context: '{{ area_context }}'
+            enabled: true
+          alias: Has Fan
+      - action: logbook.log
+        data:
+          name: GPE LOCKED
+          message: 'LOCKED: {{ target_area }} via {{ source_entity }}. (Door Age:
+            {{ door_age | int }}s, Presence: {{ is_on }})'
+          entity_id: '{{ source_entity }}'
+    - alias: Valid Turn On (Anti-Ghosting)
+      conditions:
+      - condition: template
+        value_template: '{{ (is_entrance or is_door or is_presence) and is_presence_policy_active
+          and is_on and not is_ghost and not is_area_locked }}'
+      sequence:
+      - action: logbook.log
+        data:
+          name: GPE
+          message: 'Turn On: Via {{''Motion'' if is_presence else ''Portal'' }} Room
+            {{ target_area }} (Registry Reset, Door Age: {{ door_age | int }}s)'
+          entity_id: '{{ source_entity }}'
+      - alias: Turn On Lighting
+        if:
+        - condition: template
+          value_template: '{{ not use_scene }}'
+        then:
+        - event: universal_controller_command
+          event_data:
+            action_type: light_call
+            command_input: turn_on
+            target:
+              area_id: '{{ target_area }}'
+              label_id: '{{ final_target_label }}'
+            action_value: '{{ ''night_mode'' if use_night_settings else ''day_mode''
+              }}'
+            metadata:
+              publish_intent: add
+              claimant_id: '{{ source_entity }}'
+              seconds: '{{ 30 if is_door and has_presence else -1 }}'
+              intent_type: motion
+              domain: lighting
+            area_context: '{{ area_context }}'
+            source_device: '{{ source_entity }}'
+        else:
+        - event: area_registry_update
+          event_data:
+            action: add
+            claimant_id: '{{ source_entity }}'
+            domain: lighting
+            target:
+              area_id: '{{ target_area }}'
+              label_id: '{{ final_target_label }}'
+            intent_type: motion
+            area_context: '{{ area_context }}'
+            seconds: '{{ -1 if is_presence else 30 }}'
+            skip_warning: true
+        - if:
+          - condition: template
+            value_template: '{{ current_scene.scene_id == 0 }}'
+          then:
+          - event: universal_controller_command
+            event_data:
+              action_type: scene_cycle
+              target:
+                area_id: '{{ target_area }}'
+                label_id: '{{ final_target_label }}'
+              action_value: restore
+              metadata:
+                publish_intent: add
+                claimant_id: '{{ source_entity }}'
+                intent_type: motion
+                domain: lighting
+                seconds: -1
+              area_context: '{{ area_context }}'
+              source_device: '{{ source_entity }}'
+      - alias: Additional Domains
+        choose:
+        - conditions:
+          - condition: template
+            value_template: '{{ has_fan }}'
+          sequence:
+          - action: fan.turn_on
+            metadata: {}
+            target:
+              entity_id: '{{ fan_entities }}'
+            data: {}
+          - event: area_registry_update
+            event_data:
+              action: '{{ ''remove'' if is_presence else ''add'' }}'
+              claimant_id: '{{ source_entity }}'
+              domain: ventilation
+              target:
+                area_id: '{{ target_area }}'
+              intent_type: motion
+              area_context: '{{ area_context }}'
+              seconds: '{{ 0 if is_presence else 30 }}'
+            enabled: true
+          alias: Has Fan
+    - alias: Presence Cleared (Handover)
+      conditions:
+      - condition: template
+        value_template: '{{ is_presence and is_presence_policy_active and not is_on
+          and not is_area_locked }}'
+      sequence:
+      - alias: Lighting Set Turn Off
+        choose:
+        - alias: Start Expiry Timer (120s)
+          conditions:
+          - condition: template
+            value_template: '{{ not use_scene }}'
+          sequence:
+          - event: area_registry_update
+            event_data:
+              action: add
+              claimant_id: '{{ source_entity }}'
+              domain: lighting
+              target:
+                area_id: '{{ target_area }}'
+                label_id: '{{ final_target_label }}'
+              intent_type: motion
+              seconds: 110
+              area_context: '{{ area_context }}'
+          - action: logbook.log
+            data:
+              name: GPE
+              message: 'Cleared: Via {{''Motion'' if is_presence else ''Portal'' }}
+                Room {{ target_area }} (Registry Reset, Door Age: {{ door_age | int
+                }}s)'
+              entity_id: '{{ source_entity }}'
+        - alias: Call Off Scene
+          conditions:
+          - condition: template
+            value_template: '{{ call_off_scene }}'
+          sequence:
+          - event: area_registry_update
+            event_data:
+              action: add
+              claimant_id: '{{ source_entity }}'
+              domain: lighting
+              target:
+                area_id: '{{ target_area }}'
+                label_id: '{{ final_target_label }}'
+              intent_type: motion
+              skip_warning: true
+              seconds: 240
+              area_context: '{{ area_context }}'
+          - action: logbook.log
+            data:
+              name: GPE
+              message: 'Cleared: Via {{''Motion'' if is_presence else ''Portal'' }}
+                Room {{ target_area }} (Registry Reset, Door Age: {{ door_age | int
+                }}s)'
+              entity_id: '{{ source_entity }}'
+      - alias: Additional Domains
+        choose:
+        - conditions:
+          - condition: template
+            value_template: '{{ has_fan }}'
+          sequence:
+          - event: area_registry_update
+            event_data:
+              action: add
+              claimant_id: '{{ source_entity }}'
+              domain: ventilation
+              target:
+                area_id: '{{ target_area }}'
+              intent_type: motion
+              area_context: '{{ area_context }}'
+              seconds: 290
+            enabled: true
+          alias: Has Fan
+    - alias: Door Closed Timer Reset
+      conditions:
+      - condition: template
+        value_template: '{{ is_door and not is_on }}'
+      sequence:
+      - event: area_registry_update
+        event_data:
+          action: add
+          claimant_id: '{{ source_entity }}'
+          domain: lighting
+          target:
+            area_id: '{{ target_area }}'
+            label_id: '{{ final_target_label }}'
+          intent_type: motion
+          seconds: 30
+          skip_warning: '{{ not is_lock_zone }}'
+          area_context: '{{ area_context }}'
+    - alias: Presence Update (Motion Reset)
+      conditions:
+      - condition: template
+        value_template: '{{ is_presence and is_on and is_presence_policy_active and
+          not is_area_locked and (not has_door or not is_door_closed) }}'
+      sequence:
+      - event: area_registry_update
+        event_data:
+          action: add
+          claimant_id: '{{ source_entity }}'
+          domain: lighting
+          target:
+            area_id: '{{ target_area }}'
+            label_id: '{{ final_target_label }}'
+          intent_type: motion
+          seconds: 120
+          area_context: '{{ area_context }}'
+      - alias: Additional Domains
+        choose:
+        - conditions:
+          - condition: template
+            value_template: '{{ has_fan }}'
+          sequence:
+          - event: area_registry_update
+            event_data:
+              action: add
+              claimant_id: '{{ source_entity }}'
+              domain: ventilation
+              target:
+                area_id: '{{ target_area }}'
+              intent_type: motion
+              area_context: '{{ area_context }}'
+              seconds: 290
+            enabled: true
+          alias: Has Fan
+    - alias: Safety Unlock (Grace Period)
+      conditions:
+      - condition: template
+        value_template: '{{ should_unlock_area }}'
+      sequence:
+      - action: logbook.log
+        data:
+          name: GPE UNLOCK
+          message: 'UNLOCKING: {{ target_area }} (Handover to 30s Grace). (Reason:
+            Door Opened/Ajar)'
+          entity_id: '{{ source_entity }}'
+      - event: area_registry_update
+        event_data:
+          action: add
+          claimant_id: '{{ locked_claimant_id }}'
+          domain: lighting
+          target:
+            area_id: '{{ target_area }}'
+            label_id: '{{ final_target_label }}'
+          intent_type: motion
+          seconds: 30
+          locked: false
+          area_context: '{{ area_context }}'
+      - event: area_registry_update
+        event_data:
+          action: purge
+          claimant_id: '{{ locked_claimant_id }}'
+          domain: lighting
+          target:
+            area_id: '{{ target_area }}'
+            label_id: '{{ final_target_label }}'
+          intent_type: motion
+          seconds: 0
+          area_context: '{{ area_context }}'
+        enabled: false
+      - alias: Additional Domains
+        choose:
+        - conditions:
+          - condition: template
+            value_template: '{{ has_fan }}'
+          sequence:
+          - event: area_registry_update
+            event_data:
+              action: add
+              claimant_id: '{{ locked_claimant_id }}'
+              domain: ventilation
+              target:
+                area_id: '{{ target_area }}'
+              intent_type: motion
+              area_context: '{{ area_context }}'
+              seconds: 110
+              locked: false
+            enabled: true
+          alias: Has Fan
+      - delay:
+          hours: 0
+          minutes: 0
+          seconds: 0
+          milliseconds: 50
+        enabled: false
+    enabled: true
+    default:
+    - action: logbook.log
+      data:
+        name: GPE
+        message: 'Dropped: {{''Motion'' if is_presence else ''Portal'' }} in {{ area_name(target_area)
+          }} (Door Age: {{ door_age | int }}s)'
+        entity_id: '{{ source_entity }}'
+  - if:
+    - condition: template
+      value_template: '{{ should_trigger_peer }}'
+    then:
+    - event: universal_controller_command
+      event_data:
+        action_type: light_call
+        command_input: turn_on
+        target:
+          area_id: '{{ adjoining_area }}'
+          label_id: '{{ final_target_label }}'
+        action_value: ''
+        metadata:
+          publish_intent: skip
+          domain: lighting
+        area_context: '{{ area_context }}'
+    enabled: true
+  mode: parallel
+  variables: {}
+  max: 50
+  trace:
+    stored_traces: 50
+- id: '1786169048788'
+  alias: Remote (v2)
+  description: ''
+  triggers:
+  - trigger: mqtt
+    topic: zigbee2mqtt/+/action
+  conditions:
+  - condition: template
+    value_template: '{% set dev = device_id(trigger.topic.split(''/'')[1]) %} {{ dev
+      and ''remote'' in labels(dev) and trigger.payload | replace(''brightness_step_'',
+      '''') in [''on'', ''off'', ''up'', ''down''] }}
+
+      '
+  actions:
+  - variables:
+      event_type: '{{ trigger.payload | replace(''brightness_step_'', '''') }}'
+      area_id: '{{ area_id(device_id(trigger.topic.split(''/'')[1])) }}'
+  - action: "{{ {\n  'on': 'select.select_last',\n  'off': 'select.select_first',\n
+      \ 'up': 'select.select_next',\n  'down': 'select.select_previous'\n}[event_type]
+      }}\n"
+    target:
+      entity_id: select.{{ area_id }}_matrix_scene
+    data: '{{ {} if event_type in [''on'', ''off''] else {''cycle'': false} }}'
+  mode: queued
+  max: 10
+- id: '1786170305867'
+  alias: UCC - Lutron Pico Coordinator - Pico Registry Update (V5.x)
+  description: High-performance gesture and intent engine for Lutron Picos (Flattened
+    Architecture)
+  triggers:
+  - trigger: event
+    event_type: lutron_caseta_button_event
+    event_data:
+      action: press
+  conditions:
+  - condition: template
+    value_template: '{{ not is_owned or is_expired }}'
+  actions:
+  - event: device_lock_claim
+    event_data:
+      device_id: '{{ device_id }}'
+      isOwned: true
+      owned_ts: '{{ as_timestamp(trigger.event.time_fired) }}'
+  - variables:
+      device_id: '{{ trigger.event.data.device_id | default(''none'') }}'
+      session_id: '{{ trigger.event.context.id | default(''none'') }}'
+      button_type: '{{ trigger.event.data.button_type | default(''unknown'') }}'
+      button_number: '{{ trigger.event.data.button_number | default(0) }}'
+      target_area: '{{ area_id(device_id) | default(none) }}'
+      serial: '{{ trigger.event.data.serial | default(0) }}'
+      sensor_entity: sensor.pico_config_{{ serial }}
+      is_commission: '{{ has_value(sensor_entity) and state_attr(sensor_entity, ''config'')
+        not in [none, '''', ''unknown''] }}'
+      command_map: '{{ state_attr(sensor_entity, ''config'') if is_commission else
+        {} }}'
+  - wait_for_trigger:
+    - event_type: lutron_caseta_button_event
+      event_data:
+        serial: '{{ serial }}'
+        device_id: '{{ device_id }}'
+        button_number: '{{ button_number }}'
+        action: release
+      trigger: event
+    timeout: '00:00:00.500'
+    continue_on_timeout: true
+  - variables:
+      is_hold: '{{ wait.trigger is none }}'
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ not is_hold }}'
+      sequence:
+      - wait_for_trigger:
+        - event_type: lutron_caseta_button_event
+          event_data:
+            serial: '{{ serial }}'
+            device_id: '{{ device_id }}'
+            button_number: '{{ button_number }}'
+            action: press
+          trigger: event
+        timeout: '00:00:00.250'
+        continue_on_timeout: true
+  - variables:
+      command: '{% if is_hold %}hold {% elif wait.trigger is not none %}double {%
+        else %}press {% endif %}'
+      action_map: '{{ command_map.get(command, {}) }}'
+      cmd: '{{ action_map.get(button_number | string, none) if is_commission else
+        {''type'': ''pico_commission'', ''value'': '''', ''action'': ''broadcast''}
+        }}'
+  - if:
+    - condition: template
+      value_template: '{{ cmd is not none }}'
+    then:
+    - variables:
+        is_eligible: '{{ target_area in label_areas(''area_override_eligible'') }}'
+        intent_type: '{{ ''override'' if is_eligible and cmd.type == ''light_call''
+          and cmd.action in [''turn_on'', ''turn_off''] else '''' }}'
+        domain: '{{ {''light_call'': ''lighting'', ''scene_cycle'': ''lighting'',
+          ''fan_call'': ventilation | default(''lighting''), ''media_call'': ''media''}.get(cmd.type,
+          ''lighting'') }}'
+        profile_sensor: sensor.{{ target_area }}_profile
+        registry_sensor: sensor.{{ target_area }}_presence_intent
+        profile_exists: '{{ states(profile_sensor) not in [''unknown'', ''unavailable'']
+          }}'
+        profile_features: '{{ state_attr(profile_sensor, ''features'') | default({},
+          true) if profile_exists else {} }}'
+        registry: '{{ state_attr(''sensor.global_variable_registry'', ''vars'') |
+          default({}, true) }}'
+        g_env: '{{ registry.get(''globals'', {}).get(''environmental'', {}) }}'
+        current_posture: '{{ states(g_env.get(''schedule_posture'', '''')) | default(''daylight'',
+          true) }}'
+        use_night: '{{ profile_features.get(''night_light'', false) and is_state(g_env.get(''night_posture_sensor'',
+          ''''), ''on'') }}'
+        target_label: '{{ [''night_light''] if use_night else [''main''] }}'
+    - choose:
+      - conditions:
+        - condition: template
+          value_template: '{{ command == ''hold'' }}'
+        sequence:
+        - variables:
+            repeat_delay: '{{ 125 if cmd.type == ''media_call'' else 500 }}'
+            max_iterations: '{{ (9 / (repeat_delay / 1000)) | round(0) }}'
+        - repeat:
+            until:
+            - condition: template
+              value_template: '{{ repeat.index > max_iterations }}'
+            sequence:
+            - event: universal_controller_command
+              event_data:
+                source_device: pico
+                action_type: '{{ cmd.type }}'
+                action_value: '{{ cmd.value }}'
+                command_input: '{{ cmd.action }}'
+                target:
+                  area_id: '{{ target_area }}'
+                  label_id: '{{ target_label }}'
+                session_id: '{{ session_id }}'
+                metadata:
+                  session_id: '{{ session_id }}'
+                  claimant_id: pico.{{ [trigger.event.data.area_name | default('unknown',
+                    true), trigger.event.data.device_name | default('device', true)]
+                    | slugify }}
+                  publish_intent: ignore
+                command: '{{ command }}'
+                command_type: '{{ trigger.event.data.button_type | slugify ~ ''_''
+                  ~ command }}'
+            - delay:
+                milliseconds: '{{ repeat_delay }}'
+    - choose:
+      - conditions:
+        - condition: template
+          value_template: '{{ command != ''hold'' }}'
+        sequence:
+        - event: universal_controller_command
+          event_data:
+            source_device: pico
+            action_type: '{{ cmd.type }}'
+            action_value: '{{ cmd.value }}'
+            command_input: '{{ cmd.action }}'
+            target:
+              area_id: '{{ target_area }}'
+              label_id: '{{ target_label }}'
+            metadata:
+              session_id: '{{ session_id }}'
+              claimant_id: pico.{{ [trigger.event.data.area_name | default('unknown',
+                true), trigger.event.data.device_name | default('device', true)] |
+                slugify }}
+              seconds: '{{ 7200 if cmd.action == ''turn_on'' else 0 }}'
+              publish_intent: '{{ ''ignore'' if not is_eligible else ''add'' if cmd.action
+                == ''turn_on'' else ''remove'' }}'
+              intent_type: '{{ intent_type }}'
+              domain: '{{ domain }}'
+            command: '{{ command }}'
+            command_type: '{{ trigger.event.data.button_type | lower | replace(''
+              '', '''') | replace(''_'', '''') }}_{{ command }}'
+        - action: logbook.log
+          data:
+            name: UCC_SENT
+            message: 'Area: {{ target_area }} | Action: {{(cmd.type) }} | Value: {{(cmd.value)
+              }} | Label: {{ target_label[0] }} | Config: {{ sensor_entity }}'
+            entity_id: sensor.ucc_registry_log
+  - event: device_lock_claim
+    event_data:
+      device_id: '{{ device_id }}'
+      isOwned: false
+      owned_ts: '{{ as_timestamp(now()) }}'
+  mode: parallel
+  variables:
+    session_id: '{{ trigger.event.context.id }}'
+    sessions: '{{ state_attr(''sensor.device_lock_registry'', ''active_sessions'')
+      | default({}) }}'
+    device_id: '{{ trigger.event.data.device_id | default(''none'') }}'
+    session: '{{ sessions.get(device_id, {}) }}'
+    is_owned: '{{ session.isOwned | default(false) }}'
+    start_ts: '{{ as_timestamp(trigger.event.time_fired) | default(as_timestamp(now()))
+      }}'
+    is_expired: '{{ start_ts >= (session.expiry | default(0)) }}'
+  max: 10
+- id: '1786215159471'
+  alias: UCC - Lutron Pico Coordinator - Pico Registry Update (V5.1)
+  description: High-performance gesture and intent engine for Lutron Picos (Flattened
+    Architecture)
+  triggers:
+  - trigger: event
+    event_type: lutron_caseta_button_event
+    event_data:
+      action: press
+    enabled: false
+  conditions:
+  - condition: template
+    value_template: '{{ not is_owned or is_expired }}'
+  actions:
+  - event: device_lock_claim
+    event_data:
+      device_id: '{{ device_id }}'
+      isOwned: true
+      owned_ts: '{{ as_timestamp(trigger.event.time_fired) }}'
+  - variables:
+      base_pico_configs:
+        Pico2Button:
+          reset_button: '5'
+          reset_command: hold
+          press:
+            '1':
+              type: light_call
+              action: turn_on
+              value: max
+            '5':
+              type: light_call
+              action: turn_on
+              value: min
+        Pico3Button:
+          reset_button: '5'
+          reset_command: hold
+          press:
+            '1':
+              type: light_call
+              action: turn_on
+              value: max
+            '2':
+              type: light_call
+              action: turn_on
+              value: max
+            '5':
+              type: light_call
+              action: turn_on
+              value: min
+        PaddleSwitchPico:
+          reset_button: '4'
+          reset_command: double
+          press:
+            '2':
+              type: light_call
+              action: turn_on
+              value: ''
+            '4':
+              type: light_call
+              action: turn_off
+              value: ''
+          double:
+            '2':
+              type: light_call
+              action: turn_on
+              value: max
+          hold:
+            '2':
+              type: light_call
+              action: turn_on
+              value: raise
+            '4':
+              type: light_call
+              action: turn_on
+              value: lower
+          release:
+            '2':
+              type: light_call
+              action: turn_on
+              value: release
+            '4':
+              type: light_call
+              action: turn_on
+              value: release
+        Pico2ButtonRaiseLower:
+          reset_button: '4'
+          reset_command: double
+          press:
+            '2':
+              type: scene_cycle
+              action: turn_on
+              value: max
+            '4':
+              type: scene_cycle
+              action: turn_on
+              value: 'off'
+            '5':
+              type: scene_cycle
+              action: turn_on
+              value: raise
+            '6':
+              type: scene_cycle
+              action: turn_on
+              value: lower
+          hold:
+            '5':
+              type: media_call
+              action: broadcast
+              value: volume_up
+            '6':
+              type: media_call
+              action: broadcast
+              value: volume_down
+          release:
+            '5':
+              type: media_call
+              action: broadcast
+              value: release
+            '6':
+              type: media_call
+              action: broadcast
+              value: release
+        Pico3ButtonRaiseLower:
+          reset_button: '5'
+          reset_command: hold
+          press:
+            '2':
+              type: light_call
+              action: turn_on
+              value: ''
+            '3':
+              type: light_call
+              action: turn_on
+              value: ''
+            '4':
+              type: light_call
+              action: turn_off
+              value: ''
+            '5':
+              type: light_call
+              action: turn_on
+              value: raise
+            '6':
+              type: light_call
+              action: turn_on
+              value: lower
+          double:
+            '2':
+              type: light_call
+              action: turn_on
+              value: max
+            '4':
+              type: light_call
+              action: turn_on
+              value: min
+          hold:
+            '2':
+              type: light_call
+              action: turn_on
+              value: raise
+            '4':
+              type: light_call
+              action: turn_on
+              value: lower
+          release:
+            '2':
+              type: light_call
+              action: turn_on
+              value: release
+            '4':
+              type: light_call
+              action: turn_on
+              value: release
+        Pico4Button2Group:
+          press:
+            '8':
+              type: light_scene
+              action: main
+              value: '151'
+            '9':
+              type: light_scene
+              action: main
+              value: 'off'
+            '10':
+              type: light_scene
+              action: front
+              value: '151'
+            '11':
+              type: light_scene
+              action: front
+              value: 'off'
+          double:
+            '8':
+              type: light_scene
+              action: main
+              value: max
+            '9':
+              type: light_scene
+              action: main
+              value: min
+            '10':
+              type: light_scene
+              action: front
+              value: max
+            '11':
+              type: light_scene
+              action: front
+              value: min
+          hold:
+            '8':
+              type: light_scene
+              action: main
+              value: raise
+            '9':
+              type: light_scene
+              action: main
+              value: lower
+            '10':
+              type: light_scene
+              action: front
+              value: raise
+            '11':
+              type: light_scene
+              action: front
+              value: lower
+          release:
+            '8':
+              type: light_scene
+              action: main
+              value: release
+            '9':
+              type: light_scene
+              action: main
+              value: release
+            '10':
+              type: light_scene
+              action: front
+              value: release
+            '11':
+              type: light_scene
+              action: front
+              value: release
+        Pico4ButtonScene:
+          reset_button: '11'
+          reset_command: double
+          press:
+            '8':
+              type: scene_cycle
+              action: turn_on
+              value: max
+            '9':
+              type: scene_cycle
+              action: turn_on
+              value: raise
+            '10':
+              type: scene_cycle
+              action: turn_on
+              value: lower
+            '11':
+              type: scene_cycle
+              action: turn_on
+              value: 'off'
+          hold:
+            '9':
+              type: media_call
+              action: broadcast
+              value: volume_up
+            '10':
+              type: media_call
+              action: broadcast
+              value: volume_down
+          release:
+            '9':
+              type: media_call
+              action: broadcast
+              value: release
+            '10':
+              type: media_call
+              action: broadcast
+              value: release
+      override:
+        feeder:
+          press:
+            '3':
+              type: pet_feeder
+              action: broadcast
+              value: portion
+          hold:
+            '3':
+              type: pet_feeder
+              action: broadcast
+              value: portion
+          release:
+            '3':
+              type: pet_feeder
+              action: broadcast
+              value: release
+  - variables:
+      device_id: '{{ trigger.event.data.device_id | default(''none'') }}'
+      type: '{{ trigger.event.data.type | default(''Pico3ButtonRaiseLower'') }}'
+      device_name: '{{ trigger.event.data.device_name | regex_replace(find=''[\d\s]+'',
+        replace='''') | lower | default(''main'') }}'
+      serial: '{{ trigger.event.data.serial | default(0) }}'
+      sensor_entity: sensor.pico_config_{{ serial }}
+      has_custom_config: '{{ has_value(sensor_entity) and state_attr(sensor_entity,
+        ''config'') not in [none, '''', ''unknown''] }}'
+      command_map: "{% if has_custom_config %}\n  {{ state_attr(sensor_entity, 'config')
+        }}\n{% else %}\n  {{ base_pico_configs.get(type, base_pico_configs['Pico3ButtonRaiseLower'])
+        }}\n{% endif %} "
+      session_id: '{{ trigger.event.context.id | default(''none'') }}'
+      button_number: '{{ trigger.event.data.button_number | default(0) }}'
+      target_area: '{{ area_id(device_id) | default(none) }}'
+      is_commissioned: '{{ has_value(sensor_entity) and state_attr(sensor_entity,
+        ''config'') not in [none, '''', ''unknown''] }}'
+  - wait_for_trigger:
+    - event_type: lutron_caseta_button_event
+      event_data:
+        serial: '{{ serial }}'
+        device_id: '{{ device_id }}'
+        button_number: '{{ button_number }}'
+        action: release
+      trigger: event
+    timeout: '00:00:00.500'
+    continue_on_timeout: true
+    alias: Wait for Release Within 500ms
+  - variables:
+      is_hold: '{{ wait.trigger is none }}'
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ not is_hold }}'
+      sequence:
+      - wait_for_trigger:
+        - event_type: lutron_caseta_button_event
+          event_data:
+            serial: '{{ serial }}'
+            device_id: '{{ device_id }}'
+            button_number: '{{ button_number }}'
+            action: press
+          trigger: event
+        timeout: '00:00:00.250'
+        continue_on_timeout: true
+    alias: If not hold wait 250ms for second press
+  - variables:
+      command: '{% if is_hold %}hold {% elif wait.trigger is not none %}double {%
+        else %}press {% endif %}'
+      model_reset_btn: '{{ command_map.get(''reset_button'', ''1'') }}'
+      model_reset_cmd: '{{ command_map.get(''reset_command'', ''hold'') }}'
+      is_factory_reset: '{{ command == model_reset_cmd and button_number | string
+        == model_reset_btn }}'
+      cmd: "{% if is_factory_reset and not is_commissioned %}\n  {{ {'type': 'pico_commission',
+        'value': 'reset', 'action': 'broadcast'} }}\n{% else %}\n  {{ command_map.get(command,
+        {}).get(button_number | string, none) }}\n{% endif %}"
+  - if:
+    - condition: template
+      value_template: '{{ cmd is not none }}'
+    then:
+    - variables:
+        is_eligible: '{{ target_area in label_areas(''area_override_eligible'') }}'
+        intent_type: '{{ ''override'' if is_eligible and cmd.type == ''light_call''
+          and cmd.action in [''turn_on'', ''turn_off''] else '''' }}'
+        domain: '{{ {''light_call'': ''lighting'', ''scene_cycle'': ''lighting'',
+          ''fan_call'': ventilation | default(''lighting''), ''media_call'': ''media''}.get(cmd.type,
+          ''lighting'') }}'
+        profile_sensor: sensor.{{ target_area }}_profile
+        registry_sensor: sensor.{{ target_area }}_presence_intent
+        profile_exists: '{{ states(profile_sensor) not in [''unknown'', ''unavailable'']
+          }}'
+        profile_features: '{{ state_attr(profile_sensor, ''features'') | default({},
+          true) if profile_exists else {} }}'
+        g_env: '{% set registry = state_attr(''sensor.global_variable_registry'',
+          ''vars'') |
+
+          default({}, true)  %}
+
+          {{ registry.get(''globals'', {}).get(''environmental'', {}) }}'
+        current_posture: '{{ states(g_env.get(''schedule_posture'', '''')) | default(''daylight'',
+          true) }}'
+        use_night: '{{ profile_features.get(''night_light'', false) and is_state(g_env.get(''night_posture_sensor'',
+          ''''), ''on'') }}'
+        target_label: "{{ ['night_light'] if use_night else [device_name] }}\n{#\n
+          \ const rawName = device.name || \"standard\";\n  const fullName = (device.device_info?.name
+          || rawName).toLowerCase();\n  \n  // Regex-based target_label\n  const targetDeviceName
+          = rawName\n      .toLowerCase()\n      .replace(/\\s+/g, '_')\n      .replace(/\\d+/g,
+          '');\n\n  const targetLabel = targetDeviceName === 'remote' ? [] : [targetDeviceName];\n#}"
+    - choose:
+      - conditions:
+        - condition: template
+          value_template: '{{ command == ''hold'' }}'
+        sequence:
+        - variables:
+            repeat_delay: '{{ 125 if cmd.type == ''media_call'' else 500 }}'
+            max_iterations: '{{ (9 / (repeat_delay / 1000)) | round(0) }}'
+        - repeat:
+            until:
+            - condition: template
+              value_template: '{{ repeat.index > max_iterations }}'
+            sequence:
+            - event: universal_controller_command
+              event_data:
+                source_device: pico
+                action_type: '{{ cmd.type }}'
+                action_value: '{{ cmd.value }}'
+                command_input: '{{ cmd.action }}'
+                target:
+                  area_id: '{{ target_area }}'
+                  label_id: '{{ target_label }}'
+                session_id: '{{ session_id }}'
+                metadata:
+                  session_id: '{{ session_id }}'
+                  claimant_id: pico.{{ [trigger.event.data.area_name | default('unknown',
+                    true), trigger.event.data.device_name | default('device', true)]
+                    | slugify }}
+                  publish_intent: ignore
+                command: '{{ command }}'
+                command_type: '{{ trigger.event.data.button_type | slugify ~ ''_''
+                  ~ command }}'
+            - delay:
+                milliseconds: '{{ repeat_delay }}'
+      alias: Hold - Repeat fire events
+    - choose:
+      - conditions:
+        - condition: template
+          value_template: '{{ command != ''hold'' }}'
+        sequence:
+        - event: universal_controller_command
+          event_data:
+            source_device: pico
+            action_type: '{{ cmd.type }}'
+            action_value: '{{ cmd.value }}'
+            command_input: '{{ cmd.action }}'
+            target:
+              area_id: '{{ target_area }}'
+              label_id: '{{ target_label }}'
+            metadata:
+              session_id: '{{ session_id }}'
+              claimant_id: pico.{{ [trigger.event.data.area_name | default('unknown',
+                true), trigger.event.data.device_name | default('device', true)] |
+                slugify }}
+              seconds: '{{ 7200 if cmd.action == ''turn_on'' else 0 }}'
+              publish_intent: '{{ ''ignore'' if not is_eligible else ''add'' if cmd.action
+                == ''turn_on'' else ''remove'' }}'
+              intent_type: '{{ intent_type }}'
+              domain: '{{ domain }}'
+            command: '{{ command }}'
+            command_type: '{{ trigger.event.data.button_type | lower | replace(''
+              '', '''') | replace(''_'', '''') }}_{{ command }}'
+        - action: logbook.log
+          data:
+            name: UCC_SENT
+            message: 'Area: {{ target_area }} | Action: {{(cmd.type) }} | Value: {{(cmd.value)
+              }} | Label: {{ target_label[0] }} | Config: {{ sensor_entity }}'
+            entity_id: sensor.ucc_registry_log
+      alias: Press, Double, Release - Fire event
+  - event: device_lock_claim
+    event_data:
+      device_id: '{{ device_id }}'
+      isOwned: false
+      owned_ts: '{{ as_timestamp(now()) }}'
+  mode: parallel
+  variables:
+    session_id: '{{ trigger.event.context.id }}'
+    sessions: '{{ state_attr(''sensor.device_lock_registry'', ''active_sessions'')
+      | default({}) }}'
+    device_id: '{{ trigger.event.data.device_id | default(''none'') }}'
+    session: '{{ sessions.get(device_id, {}) }}'
+    is_owned: '{{ session.isOwned | default(false) }}'
+    start_ts: '{{ as_timestamp(trigger.event.time_fired) | default(as_timestamp(now()))
+      }}'
+    is_expired: '{{ start_ts >= (session.expiry | default(0)) }}'
+  max: 10
+- id: '1786335055086'
+  alias: 'System - Publish MQTT Data '
+  description: ''
+  triggers:
+  - trigger: mqtt
+    options:
+      topic: homeassistant/status
+      payload: online
+  conditions: []
+  actions:
+  - action: script.mqtt_discovery_v6
+    metadata: {}
+    data: {}
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 25
+      milliseconds: 0
+    enabled: false
+  mode: single
+- id: '1786420900915'
+  alias: Override - Pet Feeder (Subscriber)
+  description: Subscriber and Responder for Pet Feeder Pico logic
+  triggers:
+  - trigger: event
+    id: redirected_event
+    event_type: universal_controller_command
+    event_data:
+      action_type: pet_feeder
+  conditions: []
+  actions:
+  - action: select.select_first
+    metadata: {}
+    target:
+      entity_id: select.hallway_cat_feeder_feed
+    data: {}
+  mode: single
+- id: '1786437081189'
+  alias: UCC - Lutron Pico Coordinator - Pico Registry Update (V5.2)
+  description: High-performance gesture and intent engine for Lutron Picos (Flattened
+    Architecture)
+  triggers:
+  - trigger: event
+    event_type: lutron_caseta_button_event
+    event_data:
+      action: press
+    enabled: false
+  conditions:
+  - condition: template
+    value_template: '{{ not is_owned or is_expired }}'
+  actions:
+  - event: device_lock_claim
+    event_data:
+      device_id: '{{ device_id }}'
+      isOwned: true
+      owned_ts: '{{ as_timestamp(trigger.event.time_fired) }}'
+  - variables:
+      base_pico_configs:
+        Pico2Button:
+          reset_button: '5'
+          reset_command: hold
+          press:
+            '1':
+              type: light_call
+              action: turn_on
+              value: max
+            '5':
+              type: light_call
+              action: turn_on
+              value: min
+        Pico3Button:
+          reset_button: '5'
+          reset_command: hold
+          press:
+            '1':
+              type: light_call
+              action: turn_on
+              value: max
+            '2':
+              type: light_call
+              action: turn_on
+              value: max
+            '5':
+              type: light_call
+              action: turn_on
+              value: min
+        PaddleSwitchPico:
+          reset_button: '4'
+          reset_command: double
+          press:
+            '2':
+              type: light_call
+              action: turn_on
+              value: ''
+            '4':
+              type: light_call
+              action: turn_off
+              value: ''
+          double:
+            '2':
+              type: light_call
+              action: turn_on
+              value: max
+          hold:
+            '2':
+              type: light_call
+              action: turn_on
+              value: raise
+            '4':
+              type: light_call
+              action: turn_on
+              value: lower
+          release:
+            '2':
+              type: light_call
+              action: turn_on
+              value: release
+            '4':
+              type: light_call
+              action: turn_on
+              value: release
+        Pico2ButtonRaiseLower:
+          reset_button: '4'
+          reset_command: double
+          press:
+            '2':
+              type: scene_cycle
+              action: turn_on
+              value: max
+            '4':
+              type: scene_cycle
+              action: turn_on
+              value: 'off'
+            '5':
+              type: scene_cycle
+              action: turn_on
+              value: raise
+            '6':
+              type: scene_cycle
+              action: turn_on
+              value: lower
+          hold:
+            '5':
+              type: media_call
+              action: broadcast
+              value: volume_up
+            '6':
+              type: media_call
+              action: broadcast
+              value: volume_down
+          release:
+            '5':
+              type: media_call
+              action: broadcast
+              value: release
+            '6':
+              type: media_call
+              action: broadcast
+              value: release
+        Pico3ButtonRaiseLower:
+          reset_button: '5'
+          reset_command: hold
+          press:
+            '2':
+              type: light_call
+              action: turn_on
+              value: ''
+            '3':
+              type: light_call
+              action: turn_on
+              value: ''
+            '4':
+              type: light_call
+              action: turn_off
+              value: ''
+            '5':
+              type: light_call
+              action: turn_on
+              value: raise
+            '6':
+              type: light_call
+              action: turn_on
+              value: lower
+          double:
+            '2':
+              type: light_call
+              action: turn_on
+              value: max
+            '4':
+              type: light_call
+              action: turn_on
+              value: min
+          hold:
+            '2':
+              type: light_call
+              action: turn_on
+              value: raise
+            '4':
+              type: light_call
+              action: turn_on
+              value: lower
+          release:
+            '2':
+              type: light_call
+              action: turn_on
+              value: release
+            '4':
+              type: light_call
+              action: turn_on
+              value: release
+        Pico4Button2Group:
+          press:
+            '8':
+              type: light_scene
+              action: main
+              value: '151'
+            '9':
+              type: light_scene
+              action: main
+              value: 'off'
+            '10':
+              type: light_scene
+              action: front
+              value: '151'
+            '11':
+              type: light_scene
+              action: front
+              value: 'off'
+          double:
+            '8':
+              type: light_scene
+              action: main
+              value: max
+            '9':
+              type: light_scene
+              action: main
+              value: min
+            '10':
+              type: light_scene
+              action: front
+              value: max
+            '11':
+              type: light_scene
+              action: front
+              value: min
+          hold:
+            '8':
+              type: light_scene
+              action: main
+              value: raise
+            '9':
+              type: light_scene
+              action: main
+              value: lower
+            '10':
+              type: light_scene
+              action: front
+              value: raise
+            '11':
+              type: light_scene
+              action: front
+              value: lower
+          release:
+            '8':
+              type: light_scene
+              action: main
+              value: release
+            '9':
+              type: light_scene
+              action: main
+              value: release
+            '10':
+              type: light_scene
+              action: front
+              value: release
+            '11':
+              type: light_scene
+              action: front
+              value: release
+        Pico4ButtonScene:
+          reset_button: '11'
+          reset_command: double
+          press:
+            '8':
+              type: scene_cycle
+              action: turn_on
+              value: max
+            '9':
+              type: scene_cycle
+              action: turn_on
+              value: raise
+            '10':
+              type: scene_cycle
+              action: turn_on
+              value: lower
+            '11':
+              type: scene_cycle
+              action: turn_on
+              value: 'off'
+          hold:
+            '9':
+              type: media_call
+              action: broadcast
+              value: volume_up
+            '10':
+              type: media_call
+              action: broadcast
+              value: volume_down
+          release:
+            '9':
+              type: media_call
+              action: broadcast
+              value: release
+            '10':
+              type: media_call
+              action: broadcast
+              value: release
+      override:
+        feeder:
+          press:
+            '3':
+              type: pet_feeder
+              action: broadcast
+              value: portion
+          hold:
+            '3':
+              type: pet_feeder
+              action: broadcast
+              value: portion
+          release:
+            '3':
+              type: pet_feeder
+              action: broadcast
+              value: release
+  - variables:
+      device_id: '{{ trigger.event.data.device_id | default(''none'') }}'
+      type: '{{ trigger.event.data.type | default(''Pico3ButtonRaiseLower'') }}'
+      device_name: '{{ trigger.event.data.device_name | regex_replace(find=''[\d\s]+'',
+        replace='''') | lower | default(''main'') }}'
+      serial: '{{ trigger.event.data.serial | default(0) }}'
+      sensor_entity: sensor.pico_config_{{ serial }}
+      has_custom_config: '{{ has_value(sensor_entity) and state_attr(sensor_entity,
+        ''config'') not in [none, '''', ''unknown''] }}'
+      command_map: "{% if has_custom_config %}\n  {{ state_attr(sensor_entity, 'config')
+        }}\n{% else %}\n  {{ base_pico_configs.get(type, base_pico_configs['Pico3ButtonRaiseLower'])
+        }}\n{% endif %} "
+      session_id: '{{ trigger.event.context.id | default(''none'') }}'
+      button_number: '{{ trigger.event.data.button_number | default(0) }}'
+      target_area: '{{ area_id(device_id) | default(none) }}'
+      is_commissioned: '{{ has_value(sensor_entity) and state_attr(sensor_entity,
+        ''config'') not in [none, '''', ''unknown''] }}'
+  - wait_for_trigger:
+    - event_type: lutron_caseta_button_event
+      event_data:
+        serial: '{{ serial }}'
+        device_id: '{{ device_id }}'
+        button_number: '{{ button_number }}'
+        action: release
+      trigger: event
+    timeout: '00:00:00.500'
+    continue_on_timeout: true
+    alias: Wait for Release Within 500ms
+  - variables:
+      is_hold: '{{ wait.trigger is none }}'
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ not is_hold }}'
+      sequence:
+      - wait_for_trigger:
+        - event_type: lutron_caseta_button_event
+          event_data:
+            serial: '{{ serial }}'
+            device_id: '{{ device_id }}'
+            button_number: '{{ button_number }}'
+            action: press
+          trigger: event
+        timeout: '00:00:00.250'
+        continue_on_timeout: true
+    alias: If not hold wait 250ms for second press
+  - variables:
+      command: '{% if is_hold %}hold {% elif wait.trigger is not none %}double {%
+        else %}press {% endif %}'
+      model_reset_btn: '{{ command_map.get(''reset_button'', ''1'') }}'
+      model_reset_cmd: '{{ command_map.get(''reset_command'', ''hold'') }}'
+      is_factory_reset: '{{ command == model_reset_cmd and button_number | string
+        == model_reset_btn }}'
+      cmd: "{% if is_factory_reset and not is_commissioned %}\n  {{ {'type': 'pico_commission',
+        'value': 'reset', 'action': 'broadcast'} }}\n{% else %}\n  {{ command_map.get(command,
+        {}).get(button_number | string, none) }}\n{% endif %}"
+  - variables:
+      is_eligible: '{{ target_area in label_areas(''area_override_eligible'') }}'
+      intent_type: '{{ ''override'' if is_eligible and cmd.type == ''light_call''
+        and cmd.action in [''turn_on'', ''turn_off''] else '''' }}'
+      domain: '{{ {''light_call'': ''lighting'', ''scene_cycle'': ''lighting'', ''fan_call'':
+        ventilation | default(''lighting''), ''media_call'': ''media''}.get(cmd.type,
+        ''lighting'') }}'
+      profile_sensor: sensor.{{ target_area }}_profile
+      registry_sensor: sensor.{{ target_area }}_presence_intent
+      profile_exists: '{{ states(profile_sensor) not in [''unknown'', ''unavailable'']
+        }}'
+      profile_features: '{{ state_attr(profile_sensor, ''features'') | default({},
+        true) if profile_exists else {} }}'
+      g_env: '{% set registry = state_attr(''sensor.global_variable_registry'', ''vars'')
+        |
+
+        default({}, true)  %}
+
+        {{ registry.get(''globals'', {}).get(''environmental'', {}) }}'
+      current_posture: '{{ states(g_env.get(''schedule_posture'', '''')) | default(''daylight'',
+        true) }}'
+      use_night: '{{ profile_features.get(''night_light'', false) and is_state(g_env.get(''night_posture_sensor'',
+        ''''), ''on'') }}'
+      target_label: "{{ ['night_light'] if use_night else [device_name] }}\n{#\n  const
+        rawName = device.name || \"standard\";\n  const fullName = (device.device_info?.name
+        || rawName).toLowerCase();\n  \n  // Regex-based target_label\n  const targetDeviceName
+        = rawName\n      .toLowerCase()\n      .replace(/\\s+/g, '_')\n      .replace(/\\d+/g,
+        '');\n\n  const targetLabel = targetDeviceName === 'remote' ? [] : [targetDeviceName];\n#}"
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ command == ''hold'' and cmd is not none }}'
+      sequence:
+      - variables:
+          repeat_delay: '{{ 125 if cmd.type == ''media_call'' else 500 }}'
+          max_iterations: '{{ (9 / (repeat_delay / 1000)) | round(0) }}'
+      - repeat:
+          until:
+          - condition: template
+            value_template: '{{ repeat.index > max_iterations }}'
+          sequence:
+          - event: universal_controller_command
+            event_data:
+              source_device: pico
+              action_type: '{{ cmd.type }}'
+              action_value: '{{ cmd.value }}'
+              command_input: '{{ cmd.action }}'
+              target:
+                area_id: '{{ target_area }}'
+                label_id: '{{ target_label }}'
+              session_id: '{{ session_id }}'
+              metadata:
+                session_id: '{{ session_id }}'
+                claimant_id: pico.{{ [trigger.event.data.area_name | default('unknown',
+                  true), trigger.event.data.device_name | default('device', true)]
+                  | slugify }}
+                publish_intent: ignore
+              command: '{{ command }}'
+              command_type: '{{ trigger.event.data.button_type | slugify ~ ''_'' ~
+                command }}'
+          - delay:
+              milliseconds: '{{ repeat_delay }}'
+      alias: Hold - Repeat fire events
+    - conditions:
+      - condition: template
+        value_template: '{{ command != ''hold'' and cmd is not none }}'
+      sequence:
+      - event: universal_controller_command
+        event_data:
+          source_device: pico
+          action_type: '{{ cmd.type }}'
+          action_value: '{{ cmd.value }}'
+          command_input: '{{ cmd.action }}'
+          target:
+            area_id: '{{ target_area }}'
+            label_id: '{{ target_label }}'
+          metadata:
+            session_id: '{{ session_id }}'
+            claimant_id: pico.{{ [trigger.event.data.area_name | default('unknown',
+              true), trigger.event.data.device_name | default('device', true)] | slugify
+              }}
+            seconds: '{{ 7200 if cmd.action == ''turn_on'' else 0 }}'
+            publish_intent: '{{ ''ignore'' if not is_eligible else ''add'' if cmd.action
+              == ''turn_on'' else ''remove'' }}'
+            intent_type: '{{ intent_type }}'
+            domain: '{{ domain }}'
+          command: '{{ command }}'
+          command_type: '{{ trigger.event.data.button_type | lower | replace('' '',
+            '''') | replace(''_'', '''') }}_{{ command }}'
+      - action: logbook.log
+        data:
+          name: UCC_SENT
+          message: 'Area: {{ target_area }} | Action: {{(cmd.type) }} | Value: {{(cmd.value)
+            }} | Label: {{ target_label[0] }} | Config: {{ sensor_entity }}'
+          entity_id: sensor.ucc_registry_log
+      alias: Press, Double, Release - Fire event
+  - event: device_lock_claim
+    event_data:
+      device_id: '{{ device_id }}'
+      isOwned: false
+      owned_ts: '{{ as_timestamp(now()) }}'
+  mode: parallel
+  variables:
+    session_id: '{{ trigger.event.context.id }}'
+    sessions: '{{ state_attr(''sensor.device_lock_registry'', ''active_sessions'')
+      | default({}) }}'
+    device_id: '{{ trigger.event.data.device_id | default(''none'') }}'
+    session: '{{ sessions.get(device_id, {}) }}'
+    is_owned: '{{ session.isOwned | default(false) }}'
+    start_ts: '{{ as_timestamp(trigger.event.time_fired) | default(as_timestamp(now()))
+      }}'
+    is_expired: '{{ start_ts >= (session.expiry | default(0)) }}'
+  max: 10
+- id: '1786437712605'
+  alias: UCC - Lutron Pico Coordinator - Pico Registry Update (V5.3)
+  description: High-performance gesture and intent engine for Lutron Picos (Flattened
+    Architecture)
+  triggers:
+  - trigger: event
+    event_type: lutron_caseta_button_event
+    event_data:
+      action: press
+    enabled: true
+  conditions:
+  - condition: template
+    value_template: '{{ not is_owned or is_expired }}'
+  actions:
+  - event: device_lock_claim
+    event_data:
+      device_id: '{{ device_id }}'
+      isOwned: true
+      owned_ts: '{{ as_timestamp(trigger.event.time_fired) }}'
+  - variables:
+      base_pico_configs:
+        Pico2Button:
+          reset_button: '5'
+          reset_command: hold
+          press:
+            '1':
+              type: light_call
+              action: turn_on
+              value: max
+            '5':
+              type: light_call
+              action: turn_on
+              value: min
+        Pico3Button:
+          reset_button: '5'
+          reset_command: hold
+          press:
+            '1':
+              type: light_call
+              action: turn_on
+              value: max
+            '2':
+              type: light_call
+              action: turn_on
+              value: max
+            '5':
+              type: light_call
+              action: turn_on
+              value: min
+        PaddleSwitchPico:
+          reset_button: '4'
+          reset_command: double
+          press:
+            '2':
+              type: light_call
+              action: turn_on
+              value: ''
+            '4':
+              type: light_call
+              action: turn_off
+              value: ''
+          double:
+            '2':
+              type: light_call
+              action: turn_on
+              value: max
+          hold:
+            '2':
+              type: light_call
+              action: turn_on
+              value: raise
+            '4':
+              type: light_call
+              action: turn_on
+              value: lower
+          release:
+            '2':
+              type: light_call
+              action: turn_on
+              value: release
+            '4':
+              type: light_call
+              action: turn_on
+              value: release
+        Pico2ButtonRaiseLower:
+          reset_button: '4'
+          reset_command: double
+          press:
+            '2':
+              type: scene_cycle
+              action: turn_on
+              value: max
+            '4':
+              type: scene_cycle
+              action: turn_on
+              value: 'off'
+            '5':
+              type: scene_cycle
+              action: turn_on
+              value: raise
+            '6':
+              type: scene_cycle
+              action: turn_on
+              value: lower
+          hold:
+            '5':
+              type: media_call
+              action: broadcast
+              value: volume_up
+            '6':
+              type: media_call
+              action: broadcast
+              value: volume_down
+          release:
+            '5':
+              type: media_call
+              action: broadcast
+              value: release
+            '6':
+              type: media_call
+              action: broadcast
+              value: release
+        Pico3ButtonRaiseLower:
+          reset_button: '5'
+          reset_command: hold
+          press:
+            '2':
+              type: light_call
+              action: turn_on
+              value: ''
+            '3':
+              type: light_call
+              action: turn_on
+              value: ''
+            '4':
+              type: light_call
+              action: turn_off
+              value: ''
+            '5':
+              type: light_call
+              action: turn_on
+              value: raise
+            '6':
+              type: light_call
+              action: turn_on
+              value: lower
+          double:
+            '2':
+              type: light_call
+              action: turn_on
+              value: max
+            '4':
+              type: light_call
+              action: turn_on
+              value: min
+          hold:
+            '2':
+              type: light_call
+              action: turn_on
+              value: raise
+            '4':
+              type: light_call
+              action: turn_on
+              value: lower
+          release:
+            '2':
+              type: light_call
+              action: turn_on
+              value: release
+            '4':
+              type: light_call
+              action: turn_on
+              value: release
+        Pico4Button2Group:
+          press:
+            '8':
+              type: light_scene
+              action: main
+              value: '151'
+            '9':
+              type: light_scene
+              action: main
+              value: 'off'
+            '10':
+              type: light_scene
+              action: front
+              value: '151'
+            '11':
+              type: light_scene
+              action: front
+              value: 'off'
+          double:
+            '8':
+              type: light_scene
+              action: main
+              value: max
+            '9':
+              type: light_scene
+              action: main
+              value: min
+            '10':
+              type: light_scene
+              action: front
+              value: max
+            '11':
+              type: light_scene
+              action: front
+              value: min
+          hold:
+            '8':
+              type: light_scene
+              action: main
+              value: raise
+            '9':
+              type: light_scene
+              action: main
+              value: lower
+            '10':
+              type: light_scene
+              action: front
+              value: raise
+            '11':
+              type: light_scene
+              action: front
+              value: lower
+          release:
+            '8':
+              type: light_scene
+              action: main
+              value: release
+            '9':
+              type: light_scene
+              action: main
+              value: release
+            '10':
+              type: light_scene
+              action: front
+              value: release
+            '11':
+              type: light_scene
+              action: front
+              value: release
+        Pico4ButtonScene:
+          reset_button: '11'
+          reset_command: double
+          press:
+            '8':
+              type: scene_cycle
+              action: turn_on
+              value: max
+            '9':
+              type: scene_cycle
+              action: turn_on
+              value: raise
+            '10':
+              type: scene_cycle
+              action: turn_on
+              value: lower
+            '11':
+              type: scene_cycle
+              action: turn_on
+              value: 'off'
+          hold:
+            '9':
+              type: media_call
+              action: broadcast
+              value: volume_up
+            '10':
+              type: media_call
+              action: broadcast
+              value: volume_down
+          release:
+            '9':
+              type: media_call
+              action: broadcast
+              value: release
+            '10':
+              type: media_call
+              action: broadcast
+              value: release
+      override:
+        feeder:
+          press:
+            '3':
+              type: pet_feeder
+              action: broadcast
+              value: portion
+          hold:
+            '3':
+              type: pet_feeder
+              action: broadcast
+              value: portion
+          release:
+            '3':
+              type: pet_feeder
+              action: broadcast
+              value: release
+  - variables:
+      device_id: '{{ trigger.event.data.device_id | default(''none'') }}'
+      type: '{{ trigger.event.data.type | default(''Pico3ButtonRaiseLower'') }}'
+      device_name: '{{ trigger.event.data.device_name | regex_replace(find=''[\d\s]+'',
+        replace='''') | lower | default(''main'') }}'
+      serial: '{{ trigger.event.data.serial | default(0) }}'
+      sensor_entity: sensor.pico_config_{{ serial }}
+      has_custom_config: '{{ has_value(sensor_entity) and state_attr(sensor_entity,
+        ''config'') not in [none, '''', ''unknown''] }}'
+      command_map: "{% if has_custom_config %}\n  {{ state_attr(sensor_entity, 'config')
+        }}\n{% else %}\n  {{ base_pico_configs.get(type, base_pico_configs['Pico3ButtonRaiseLower'])
+        }}\n{% endif %} "
+      session_id: '{{ trigger.event.context.id | default(''none'') }}'
+      button_number: '{{ trigger.event.data.button_number | default(0) }}'
+      target_area: '{{ area_id(device_id) | default(none) }}'
+      is_commissioned: '{{ has_value(sensor_entity) and state_attr(sensor_entity,
+        ''config'') not in [none, '''', ''unknown''] }}'
+  - wait_for_trigger:
+    - event_type: lutron_caseta_button_event
+      event_data:
+        serial: '{{ serial }}'
+        device_id: '{{ device_id }}'
+        button_number: '{{ button_number }}'
+        action: release
+      trigger: event
+    timeout: '00:00:00.500'
+    continue_on_timeout: true
+    alias: Wait for Release Within 500ms
+  - variables:
+      is_hold: '{{ wait.trigger is none }}'
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ not is_hold }}'
+      sequence:
+      - wait_for_trigger:
+        - event_type: lutron_caseta_button_event
+          event_data:
+            serial: '{{ serial }}'
+            device_id: '{{ device_id }}'
+            button_number: '{{ button_number }}'
+            action: press
+          trigger: event
+        timeout: '00:00:00.250'
+        continue_on_timeout: true
+    alias: If not hold wait 250ms for second press
+  - variables:
+      command: '{{ ''hold'' if is_hold else (''double'' if wait.trigger is not none
+        else ''press'') }}'
+      model_reset_btn: '{{ command_map.get(''reset_button'', ''1'') }}'
+      model_reset_cmd: '{{ command_map.get(''reset_command'', ''hold'') }}'
+      is_factory_reset: '{{ command == model_reset_cmd and button_number | string
+        == model_reset_btn }}'
+      cmd: "{% if is_factory_reset and not is_commissioned %}\n  {{ {'type': 'pico_commission',
+        'value': 'reset', 'action': 'broadcast'} }}\n{% else %}\n  {{ command_map.get(command,
+        {}).get(button_number | string, none) }}\n{% endif %}"
+  - if:
+    - condition: template
+      value_template: '{{ cmd is not none }}'
+    then:
+    - variables:
+        is_eligible: '{{ target_area in label_areas(''area_override_eligible'') }}'
+        intent_type: '{{ ''override'' if is_eligible and cmd.type == ''light_call''
+          and cmd.action in [''turn_on'', ''turn_off''] else '''' }}'
+        domain: '{{ {''light_call'': ''lighting'', ''scene_cycle'': ''lighting'',
+          ''fan_call'': ventilation | default(''lighting''), ''media_call'': ''media''}.get(cmd.type,
+          ''lighting'') }}'
+        profile_sensor: sensor.{{ target_area }}_profile
+        registry_sensor: sensor.{{ target_area }}_presence_intent
+        profile_exists: '{{ states(profile_sensor) not in [''unknown'', ''unavailable'']
+          }}'
+        profile_features: '{{ state_attr(profile_sensor, ''features'') | default({},
+          true) if profile_exists else {} }}'
+        g_env: '{% set registry = state_attr(''sensor.global_variable_registry'',
+          ''vars'') |
+
+          default({}, true)  %}
+
+          {{ registry.get(''globals'', {}).get(''environmental'', {}) }}'
+        current_posture: '{{ states(g_env.get(''schedule_posture'', '''')) | default(''daylight'',
+          true) }}'
+        use_night: '{{ profile_features.get(''night_light'', false) and is_state(g_env.get(''night_posture_sensor'',
+          ''''), ''on'') }}'
+        target_label: "{{ ['night_light'] if use_night else [device_name] }}\n{#\n
+          \ const rawName = device.name || \"standard\";\n  const fullName = (device.device_info?.name
+          || rawName).toLowerCase();\n  \n  // Regex-based target_label\n  const targetDeviceName
+          = rawName\n      .toLowerCase()\n      .replace(/\\s+/g, '_')\n      .replace(/\\d+/g,
+          '');\n\n  const targetLabel = targetDeviceName === 'remote' ? [] : [targetDeviceName];\n#}"
+    - choose:
+      - conditions:
+        - condition: template
+          value_template: '{{ command == ''hold'' }}'
+        sequence:
+        - variables:
+            repeat_delay: '{{ 125 if cmd.type == ''media_call'' else 500 }}'
+            max_iterations: '{{ (9 / (repeat_delay / 1000)) | round(0) }}'
+        - repeat:
+            until:
+            - condition: template
+              value_template: '{{ repeat.index > max_iterations }}'
+            sequence:
+            - event: universal_controller_command
+              event_data:
+                source_device: pico
+                action_type: '{{ cmd.type }}'
+                action_value: '{{ cmd.value }}'
+                command_input: '{{ cmd.action }}'
+                target:
+                  area_id: '{{ target_area }}'
+                  label_id: '{{ target_label }}'
+                session_id: '{{ session_id }}'
+                metadata:
+                  session_id: '{{ session_id }}'
+                  claimant_id: pico.{{ [trigger.event.data.area_name | default('unknown',
+                    true), trigger.event.data.device_name | default('device', true)]
+                    | slugify }}
+                  publish_intent: ignore
+                command: '{{ command }}'
+                command_type: '{{ trigger.event.data.button_type | slugify ~ ''_''
+                  ~ command }}'
+            - delay:
+                milliseconds: '{{ repeat_delay }}'
+        alias: Hold - Repeat fire events
+      default:
+      - event: universal_controller_command
+        event_data:
+          source_device: pico
+          action_type: '{{ cmd.type }}'
+          action_value: '{{ cmd.value }}'
+          command_input: '{{ cmd.action }}'
+          target:
+            area_id: '{{ target_area }}'
+            label_id: '{{ target_label }}'
+          metadata:
+            session_id: '{{ session_id }}'
+            claimant_id: pico.{{ [trigger.event.data.area_name | default('unknown',
+              true), trigger.event.data.device_name | default('device', true)] | slugify
+              }}
+            seconds: '{{ 7200 if cmd.action == ''turn_on'' else 0 }}'
+            publish_intent: '{{ ''ignore'' if not is_eligible else ''add'' if cmd.action
+              == ''turn_on'' else ''remove'' }}'
+            intent_type: '{{ intent_type }}'
+            domain: '{{ domain }}'
+          command: '{{ command }}'
+          command_type: '{{ trigger.event.data.button_type | lower | replace('' '',
+            '''') | replace(''_'', '''') }}_{{ command }}'
+      - action: logbook.log
+        data:
+          name: UCC_SENT
+          message: 'Area: {{ target_area }} | Action: {{(cmd.type) }} | Value: {{(cmd.value)
+            }} | Label: {{ target_label[0] }} | Config: {{ sensor_entity }}'
+          entity_id: sensor.ucc_registry_log
+  - event: device_lock_claim
+    event_data:
+      device_id: '{{ device_id }}'
+      isOwned: false
+      owned_ts: '{{ as_timestamp(now()) }}'
+  mode: parallel
+  variables:
+    session_id: '{{ trigger.event.context.id }}'
+    sessions: '{{ state_attr(''sensor.device_lock_registry'', ''active_sessions'')
+      | default({}) }}'
+    device_id: '{{ trigger.event.data.device_id | default(''none'') }}'
+    session: '{{ sessions.get(device_id, {}) }}'
+    is_owned: '{{ session.isOwned | default(false) }}'
+    start_ts: '{{ as_timestamp(trigger.event.time_fired) | default(as_timestamp(now()))
+      }}'
+    is_expired: '{{ start_ts >= (session.expiry | default(0)) }}'
+  max: 10
+- id: '1786441176521'
+  alias: UCC - Lutron Pico Coordinator - Pico Registry Update (V5.4)
+  description: High-performance gesture and intent engine for Lutron Picos (Flattened
+    Architecture)
+  triggers:
+  - trigger: event
+    event_type: lutron_caseta_button_event
+    event_data:
+      action: press
+    enabled: true
+  conditions:
+  - condition: template
+    value_template: '{{ not is_owned or is_expired }}'
+  actions:
+  - event: device_lock_claim
+    event_data:
+      device_id: '{{ device_id }}'
+      isOwned: true
+      owned_ts: '{{ as_timestamp(trigger.event.time_fired) }}'
+  - variables:
+      base_pico_configs:
+        Pico2Button:
+          press:
+            '1':
+              type: light_call
+              action: turn_on
+              value: max
+            '5':
+              type: light_call
+              action: turn_on
+              value: min
+        Pico3Button:
+          press:
+            '1':
+              type: light_call
+              action: turn_on
+              value: max
+            '2':
+              type: light_call
+              action: turn_on
+              value: max
+            '5':
+              type: light_call
+              action: turn_on
+              value: min
+        PaddleSwitchPico:
+          press:
+            '2':
+              type: light_call
+              action: turn_on
+              value: ''
+            '4':
+              type: light_call
+              action: turn_off
+              value: ''
+          double:
+            '2':
+              type: light_call
+              action: turn_on
+              value: max
+          hold:
+            '2':
+              type: light_call
+              action: turn_on
+              value: raise
+            '4':
+              type: light_call
+              action: turn_on
+              value: lower
+          release:
+            '2':
+              type: light_call
+              action: turn_on
+              value: release
+            '4':
+              type: light_call
+              action: turn_on
+              value: release
+        Pico2ButtonRaiseLower:
+          press:
+            '2':
+              type: scene_cycle
+              action: turn_on
+              value: max
+            '4':
+              type: scene_cycle
+              action: turn_on
+              value: 'off'
+            '5':
+              type: scene_cycle
+              action: turn_on
+              value: raise
+            '6':
+              type: scene_cycle
+              action: turn_on
+              value: lower
+          hold:
+            '5':
+              type: media_call
+              action: broadcast
+              value: volume_up
+            '6':
+              type: media_call
+              action: broadcast
+              value: volume_down
+          release:
+            '5':
+              type: media_call
+              action: broadcast
+              value: release
+            '6':
+              type: media_call
+              action: broadcast
+              value: release
+        Pico3ButtonRaiseLower:
+          press:
+            '2':
+              type: light_call
+              action: turn_on
+              value: ''
+            '3':
+              type: light_call
+              action: turn_on
+              value: ''
+            '4':
+              type: light_call
+              action: turn_off
+              value: ''
+            '5':
+              type: light_call
+              action: turn_on
+              value: raise
+            '6':
+              type: light_call
+              action: turn_on
+              value: lower
+          double:
+            '2':
+              type: light_call
+              action: turn_on
+              value: max
+            '4':
+              type: light_call
+              action: turn_on
+              value: min
+          hold:
+            '2':
+              type: light_call
+              action: turn_on
+              value: raise
+            '4':
+              type: light_call
+              action: turn_on
+              value: lower
+          release:
+            '2':
+              type: light_call
+              action: turn_on
+              value: release
+            '4':
+              type: light_call
+              action: turn_on
+              value: release
+        Pico4Button2Group:
+          press:
+            '8':
+              type: light_scene
+              action: main
+              value: '151'
+            '9':
+              type: light_scene
+              action: main
+              value: 'off'
+            '10':
+              type: light_scene
+              action: front
+              value: '151'
+            '11':
+              type: light_scene
+              action: front
+              value: 'off'
+          double:
+            '8':
+              type: light_scene
+              action: main
+              value: max
+            '9':
+              type: light_scene
+              action: main
+              value: min
+            '10':
+              type: light_scene
+              action: front
+              value: max
+            '11':
+              type: light_scene
+              action: front
+              value: min
+          hold:
+            '8':
+              type: light_scene
+              action: main
+              value: raise
+            '9':
+              type: light_scene
+              action: main
+              value: lower
+            '10':
+              type: light_scene
+              action: front
+              value: raise
+            '11':
+              type: light_scene
+              action: front
+              value: lower
+          release:
+            '8':
+              type: light_scene
+              action: main
+              value: release
+            '9':
+              type: light_scene
+              action: main
+              value: release
+            '10':
+              type: light_scene
+              action: front
+              value: release
+            '11':
+              type: light_scene
+              action: front
+              value: release
+        Pico4ButtonScene:
+          press:
+            '8':
+              type: scene_cycle
+              action: turn_on
+              value: max
+            '9':
+              type: scene_cycle
+              action: turn_on
+              value: raise
+            '10':
+              type: scene_cycle
+              action: turn_on
+              value: lower
+            '11':
+              type: scene_cycle
+              action: turn_on
+              value: 'off'
+          hold:
+            '9':
+              type: media_call
+              action: broadcast
+              value: volume_up
+            '10':
+              type: media_call
+              action: broadcast
+              value: volume_down
+          release:
+            '9':
+              type: media_call
+              action: broadcast
+              value: release
+            '10':
+              type: media_call
+              action: broadcast
+              value: release
+      override:
+        feeder:
+          press:
+            '3':
+              type: pet_feeder
+              action: broadcast
+              value: portion
+          hold:
+            '3':
+              type: pet_feeder
+              action: broadcast
+              value: portion
+          release:
+            '3':
+              type: pet_feeder
+              action: broadcast
+              value: release
+        media:
+          press:
+            '2':
+              type: media_call
+              action: broadcast
+              value: media_play_pause
+            '3':
+              type: media_call
+              action: broadcast
+              value: volume_mute
+            '4':
+              type: media_call
+              action: broadcast
+              value: media_next_track
+            '5':
+              type: media_call
+              action: broadcast
+              value: volume_up
+            '6':
+              type: media_call
+              action: broadcast
+              value: volume_down
+          hold:
+            '5':
+              type: media_call
+              action: broadcast
+              value: volume_up
+            '6':
+              type: media_call
+              action: broadcast
+              value: volume_down
+          release:
+            '5':
+              type: media_call
+              action: broadcast
+              value: release
+            '6':
+              type: media_call
+              action: broadcast
+              value: release
+        preset:
+          press:
+            '2':
+              type: scene_cycle
+              action: turn_on
+              value: max
+            '3':
+              type: scene_cycle
+              action: turn_on
+              value: '151'
+            '4':
+              type: scene_cycle
+              action: turn_on
+              value: 'off'
+            '5':
+              type: scene_cycle
+              action: turn_on
+              value: raise
+            '6':
+              type: scene_cycle
+              action: turn_on
+              value: lower
+  - variables:
+      device_id: '{{ trigger.event.data.device_id | default(''none'') }}'
+      type: '{{ trigger.event.data.type | default(''Pico3ButtonRaiseLower'') }}'
+      serial: '{{ trigger.event.data.serial | default(0) }}'
+      command_map: "{{\n  base_pico_configs.get(type, base_pico_configs['Pico3ButtonRaiseLower'])\n}}"
+      session_id: '{{ trigger.event.context.id | default(''none'') }}'
+      button_number: '{{ trigger.event.data.button_number | default(0) }}'
+      target_area: '{{ area_id(device_id) | default(none) }}'
+      override_tags: '{{ override.keys() | list }}'
+      raw_device_name: '{{ trigger.event.data.device_name | default('''') | lower
+        }}'
+      matched_tag: '{% set tokens = raw_device_name.replace(''_'', '' '').split()
+        %}
+
+        {{ (override_tags | select(''in'', tokens) | list | first) | default('''',
+        true) }}'
+      is_overridden: '{{ matched_tag != '''' }}'
+      device_name: "{%\n  set cleaned = raw_device_name | replace(matched_tag, '')
+        \n%} {{ \n  cleaned | regex_replace(find='[\\d\\s]+', replace='') | default('main')
+        \n}}"
+  - wait_for_trigger:
+    - event_type: lutron_caseta_button_event
+      event_data:
+        serial: '{{ serial }}'
+        device_id: '{{ device_id }}'
+        button_number: '{{ button_number }}'
+        action: release
+      trigger: event
+    timeout: '00:00:00.500'
+    continue_on_timeout: true
+    alias: Wait for Release Within 500ms
+  - variables:
+      is_hold: '{{ wait.trigger is none }}'
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ not is_hold }}'
+      sequence:
+      - wait_for_trigger:
+        - event_type: lutron_caseta_button_event
+          event_data:
+            serial: '{{ serial }}'
+            device_id: '{{ device_id }}'
+            button_number: '{{ button_number }}'
+            action: press
+          trigger: event
+        timeout: '00:00:00.250'
+        continue_on_timeout: true
+    alias: If not hold wait 250ms for second press
+  - variables:
+      command: '{{ ''hold'' if is_hold else (''double'' if wait.trigger is not none
+        else ''press'') }}'
+      cmd: '{% set base_cmd = command_map.get(command, {}).get(button_number | string,
+        none) %}
+
+        {% set override_cmd = override.get(matched_tag, {}).get(command, {}).get(button_number
+        | string, none) %}
+
+        {{ override_cmd if (is_overridden and override_cmd is not none) else base_cmd
+        }}'
+  - if:
+    - condition: template
+      value_template: '{{ cmd is not none }}'
+    then:
+    - variables:
+        is_eligible: '{{ target_area in label_areas(''area_override_eligible'') }}'
+        intent_type: '{{ ''override'' if is_eligible and cmd.type == ''light_call''
+          and cmd.action in [''turn_on'', ''turn_off''] else '''' }}'
+        domain: '{{ {''light_call'': ''lighting'', ''scene_cycle'': ''lighting'',
+          ''fan_call'': ''ventilation'' | default(''lighting''), ''media_call'': ''media''}.get(cmd.type,
+          ''lighting'') }}'
+        profile_sensor: sensor.{{ target_area }}_profile
+        profile_exists: '{{ states(profile_sensor) not in [''unknown'', ''unavailable'']
+          }}'
+        profile_features: '{{ state_attr(profile_sensor, ''features'') | default({},
+          true) if profile_exists else {} }}'
+        g_env: '{% set registry = state_attr(''sensor.global_variable_registry'',
+          ''vars'') |
+
+          default({}, true)  %}
+
+          {{ registry.get(''globals'', {}).get(''environmental'', {}) }}'
+        current_posture: '{{ states(g_env.get(''schedule_posture'', '''')) | default(''daylight'',
+          true) }}'
+        use_night: '{{ profile_features.get(''night_light'', false) and is_state(g_env.get(''night_posture_sensor'',
+          ''''), ''on'') }}'
+        target_label: "{{ ['night_light'] if use_night else [device_name] }}\n{#\n
+          \ const rawName = device.name || \"standard\";\n  const fullName = (device.device_info?.name
+          || rawName).toLowerCase();\n  \n  // Regex-based target_label\n  const targetDeviceName
+          = rawName\n      .toLowerCase()\n      .replace(/\\s+/g, '_')\n      .replace(/\\d+/g,
+          '');\n\n  const targetLabel = targetDeviceName === 'remote' ? [] : [targetDeviceName];\n#}"
+    - choose:
+      - conditions:
+        - condition: template
+          value_template: '{{ command == ''hold'' }}'
+        sequence:
+        - variables:
+            repeat_delay: '{{ 125 if cmd.type == ''media_call'' else 500 }}'
+            max_iterations: '{{ (9 / (repeat_delay / 1000)) | round(0) }}'
+        - repeat:
+            until:
+            - condition: template
+              value_template: '{{ repeat.index > max_iterations }}'
+            sequence:
+            - event: universal_controller_command
+              event_data:
+                source_device: pico
+                action_type: '{{ cmd.type }}'
+                action_value: '{{ cmd.value }}'
+                command_input: '{{ cmd.action }}'
+                target:
+                  area_id: '{{ target_area }}'
+                  label_id: '{{ target_label }}'
+                session_id: '{{ session_id }}'
+                metadata:
+                  session_id: '{{ session_id }}'
+                  claimant_id: pico.{{ [trigger.event.data.area_name | default('unknown',
+                    true), trigger.event.data.device_name | default('device', true)]
+                    | slugify }}
+                  publish_intent: ignore
+                command: '{{ command }}'
+                command_type: "{{\n  trigger.event.data.button_type | slugify ~ '_'
+                  ~ command\n}}"
+            - delay:
+                milliseconds: '{{ repeat_delay }}'
+        alias: Hold - Repeat fire events
+      default:
+      - event: universal_controller_command
+        event_data:
+          source_device: pico
+          action_type: '{{ cmd.type }}'
+          action_value: '{{ cmd.value }}'
+          command_input: '{{ cmd.action }}'
+          target:
+            area_id: '{{ target_area }}'
+            label_id: '{{ target_label }}'
+          metadata:
+            session_id: '{{ session_id }}'
+            claimant_id: pico.{{ [trigger.event.data.area_name | default('unknown',
+              true), trigger.event.data.device_name | default('device', true)] | slugify
+              }}
+            seconds: '{{ 7200 if cmd.action == ''turn_on'' else 0 }}'
+            publish_intent: '{{ ''ignore'' if not is_eligible else ''add'' if cmd.action
+              == ''turn_on'' else ''remove'' }}'
+            intent_type: '{{ intent_type }}'
+            domain: '{{ domain }}'
+          command: '{{ command }}'
+          command_type: '{{ trigger.event.data.button_type | slugify ~ ''_'' ~ command
+            }}'
+      - action: logbook.log
+        data:
+          name: UCC_SENT
+          message: 'Area: {{ target_area }} | Action: {{(cmd.type) }} | Value: {{(cmd.value)
+            }} | Label: {{ target_label[0] }}'
+          entity_id: sensor.ucc_registry_log
+  - event: device_lock_claim
+    event_data:
+      device_id: '{{ device_id }}'
+      isOwned: false
+      owned_ts: '{{ as_timestamp(now()) }}'
+  mode: parallel
+  variables:
+    session_id: '{{ trigger.event.context.id }}'
+    sessions: '{{ state_attr(''sensor.device_lock_registry'', ''active_sessions'')
+      | default({}) }}'
+    device_id: '{{ trigger.event.data.device_id | default(''none'') }}'
+    session: '{{ sessions.get(device_id, {}) }}'
+    is_owned: '{{ session.isOwned | default(false) }}'
+    start_ts: '{{ as_timestamp(trigger.event.time_fired) | default(as_timestamp(now()))
+      }}'
+    is_expired: '{{ start_ts >= (session.expiry | default(0)) }}'
   max: 10
