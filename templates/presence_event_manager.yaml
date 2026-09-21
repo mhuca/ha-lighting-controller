@@ -16,74 +16,40 @@ sensor:
         mdi:home-outline
       {% endif %}
     attributes:
-      # active_areas: >
-      #   {# 1. Initialize Current Registry State #}
-      #   {% set current = state_attr(this.entity_id, 'active_areas') or {} %}
-
-      #   {# 2. Extract Event Context #}
-      #   {% set target_area = trigger.event.data.area_id | default('unknown') %}
-      #   {% set new_state = trigger.event.data.state | default('EVICTED') %}
-      #   {% set claimant = trigger.event.data.last_claimant | default('system') %}
-      #   {% set intent_type = trigger.event.data.last_intent_type | default('motion') %}
-      #   {% set ttl = trigger.event.data.expiry_ttl | default(0) | float %}
-      #   {% set now_ts = as_timestamp(now()) | round(3) %}
-
-      #   {# 3. Standardized Cache Lifecycle Contract #}
-      #   {% if new_state == 'COOLDOWN' and target_area != 'unknown' %}
-      #     {# --- THE MERGE PATH --- #}
-      #     {# Area has entered a transient cooldown phase. Track it with a strict numeric expiration #}
-      #     {% set expiry_ts = (now_ts + ttl) | round(3) if ttl > 0 else none %}
-
-      #     {% set update = {
-      #       target_area: {
-      #         'state': 'COOLDOWN',
-      #         'last_claimant': claimant,
-      #         'last_intent_type': intent_type,
-      #         'last_updated': now_ts,
-      #         'expiry': expiry_ts
-      #       }
-      #     } %}
-      #     {{ dict(current, **update) }}
-
-      #   {% else %}
-      #     {# --- THE EVICTION PATH (ACTIVE, EVICTED, unknown, unavailable) --- #}
-      #     {# If the area becomes ACTIVE (in use) or EVICTED (done), scrub it from the Janitor's book instantly #}
-      #     {% set ns = namespace(output={}) %}
-      #     {% for area, data in current.items() if area != target_area %}
-      #       {% set ns.output = dict(ns.output, **{area: data}) %}
-      #     {% endfor %}
-      #     {{ ns.output }}
-      #   {% endif %}
-
       active_areas: >
         {% set current = state_attr(this.entity_id, 'active_areas') or {} %}
         {% set target_area = trigger.event.data.area_id | default('unknown', true) %}
         {% set target_dom = trigger.event.data.domain | default('lighting', true) %}
         {% set new_state = trigger.event.data.state | default('EVICTED', true) %}
         {% set claimant = trigger.event.data.last_claimant | default('system', true) %}
-        {% set intent_type = trigger.event.data.last_intent_type | default('motion', true) %}
+        {% set intent_type = trigger.event.data.last_intent_type | default('active', true) %}
         {% set ttl = trigger.event.data.expiry_ttl | default(0) | float %}
         {% set now_ts = as_timestamp(now()) | round(3) %}
 
-        {# Use clean area key for lighting, and explicit area_domain for secondary domains #}
-        {% set janitor_key = target_area if target_dom == 'lighting' else target_area ~ '_' ~ target_dom %}
+        {% set stack = trigger.event.data.intent_stack | default([], true) %}
+        {% set top_item = stack | first | default({}, true) %}
+        {% set action_value = trigger.event.data.action_value | default(top_item.get('action_value', ''), true) %}
 
-        {% if new_state == 'COOLDOWN' and target_area != 'unknown' %}
-          {% set expiry_ts = (now_ts + ttl) | round(3) if ttl > 0 else none %}
+        {% set janitor_key = target_area ~ '_' ~ target_dom %}
+
+        {# Register for Janitor sweep if there is an active expiry timer #}
+        {% if new_state != 'EVICTED' and ttl > 0 and target_area != 'unknown' %}
+          {% set expiry_ts = (now_ts + ttl) | round(3) %}
+
           {% set update = {
             janitor_key: {
               'area_id': target_area,
               'domain': target_dom,
-              'state': 'COOLDOWN',
+              'state': new_state,
               'last_claimant': claimant,
               'last_intent_type': intent_type,
+              'action_value': action_value,
               'last_updated': now_ts,
               'expiry': expiry_ts
             }
           } %}
           {{ dict(current, **update) }}
         {% else %}
-          {# Evict on ACTIVE or EVICTED #}
           {% set ns = namespace(output={}) %}
           {% for k, v in current.items() if k != janitor_key %}
             {% set ns.output = dict(ns.output, **{k: v}) %}
@@ -134,3 +100,26 @@ sensor:
         {% else %}
           {{ current_stacks }}
         {% endif %}
+
+      # -------------------------------------------------------------------
+      # 3. PRE-CALCULATED MULTI-DOMAIN ACTIVE INTENT COUNT
+      # -------------------------------------------------------------------
+      active_intent_count: >
+        {% set active_stacks = state_attr(this.entity_id, 'active_intent_stacks') or {} %}
+        {% set ns = namespace(count=0) %}
+        {% for area_id, area_payload in active_stacks.items() if area_payload is mapping %}
+          {% set ns_area = namespace(has_active=false) %}
+          {% for domain_key, domain_data in area_payload.items() if domain_data is mapping %}
+            {% set stack = domain_data.get('intent_stack', []) %}
+            {% if stack | selectattr('expiry', 'defined') 
+                        | rejectattr('expiry', 'in', [none, 'null', '']) 
+                        | rejectattr('locked', 'eq', true)
+                        | list | count > 0 %}
+              {% set ns_area.has_active = true %}
+            {% endif %}
+          {% endfor %}
+          {% if ns_area.has_active %}
+            {% set ns.count = ns.count + 1 %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.count }}

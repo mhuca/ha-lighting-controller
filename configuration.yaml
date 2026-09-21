@@ -11,6 +11,7 @@ mqtt: !include mqtt.yaml
 script: !include scripts.yaml
 scene: !include scenes.yaml
 template: !include_dir_list templates/
+python_script: !include_dir_list python_scripts/
 
 recorder:
   purge_keep_days: 7 # Keeps 7 days of history instead of 10
