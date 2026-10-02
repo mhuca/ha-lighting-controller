@@ -3149,3 +3149,341 @@ mqtt_discovery_v6:
     enabled: true
   alias: MQTT Discovery v6
   description: ''
+light_hardware_execution_engine:
+  alias: Light Hardware Execution Engine (V1.4)
+  sequence:
+  - alias: Intent and Context
+    variables:
+      target_kelvin: "{% set registry = state_attr('sensor.global_variable_registry',
+        'vars') \n   | default({}, true) %}\n{% set g_logic = registry.get('globals',{}).get('logic_engines',{})
+        %}\n{{ states(g_logic.get('cct_calculation', 3200)) | int }}\n"
+      target_color_temp: '{{ 1000000/target_kelvin | round(0) | int }}'
+      target_br_dimmer: "{% set registry = state_attr('sensor.global_variable_registry',
+        'vars') \n   | default({}, true) %}\n{% set g_logic = registry.get('globals',{}).get('logic_engines',{})
+        %}\n{{ states(g_logic.brightness_calculation) | int(255) }}\n"
+      log_dest: "{% set registry = state_attr('sensor.global_variable_registry', 'vars')
+        \n   | default({}, true) %}\n{% set g_logic = registry.get('globals',{}).get('logic_engines',{})
+        %}\n{{ g_logic.get('system_log','') }}\n"
+      action_value: '{{ payload.action_value | default('''') }}'
+      target_area: "{% set t = payload.get('target', {}) %} \n{{ t.get('area_id',
+        payload.get('area_key','none')) }}"
+      target_scene: "{% set t = payload.get('target', {}) %} \n{{ t.get('scene_id',
+        -1 ) }}"
+      target_label: "{% set t = payload.get('target', {}) %} \n{{ t.get('label_id',
+        [] ) }}"
+      target_entity: "{% set t = payload.get('target', {}) %} \n{{ t.get('entity_id',
+        [] ) }}"
+  - variables:
+      label_light_entities: "{{ ( [target_label] if target_label is string else target_label)
+        \n  | map('label_entities') \n  | sum(start=[]) \n  | unique \n  | list \n}}\n"
+      area_light_entities: '{{ area_entities(target_area) | select(''match'', ''light.*'')
+        | list }}'
+      intersected: "{% if label_light_entities | count > 0 %}\n  {{ area_light_entities
+        | intersect(label_light_entities) }}\n{% else %}\n  {{ area_light_entities
+        }}\n{% endif %}"
+      target_entities: "{% if target_entity | count > 0 %}\n  {{ intersected | intersect(target_entity)
+        }}\n{% else %}\n  {{ intersected }}\n{% endif %}"
+      meta: '{{ payload.get(''metadata'', {}) }}'
+      action_type: '{{ ''turn_off'' if payload.get(''action_value'', '''') in [0,''0'',''off'']
+        else payload.get(''command_input'', ''turn_on'') }}
+
+        '
+  - choose:
+    - conditions:
+      - alias: Lights Turn Off No Target Scene
+        condition: template
+        value_template: '{{ action_type == ''turn_off'' }}'
+      sequence:
+      - alias: Hardware Bucketing and Target Expansion (The "Engine")
+        variables:
+          is_whole_area: '{{ (target_entity + target_label) | count == 0 }}'
+          lights_off: "{{ target_entities\n  | expand \n  | rejectattr('state', 'eq',
+            'off') \n  | map(attribute='entity_id') \n  | list }}\n"
+          off_target_data: "{% if is_whole_area %}\n  {{ {\"area_id\": target_area}
+            }}\n{% else %}\n  {{ {\"entity_id\": lights_off} }}\n{% endif %}\n"
+      - alias: Standard Lights Turn Off
+        if:
+        - condition: template
+          value_template: '{{ lights_off | count > 0 or is_whole_area }}'
+        then:
+        - action: light.turn_off
+          target: '{{ off_target_data }}'
+          data: {}
+          enabled: true
+        - if:
+          - condition: template
+            value_template: '{{ is_whole_area }}'
+          then:
+          - event: area_registry_update
+            event_data:
+              action_type: area_registry_update
+              action: purge
+              domain: lighting
+              claimant_id: '{{ meta.get(''claimant_id'', payload.source_device) }}'
+              intent_type: '{{ meta.get(''intent_type'', ''active'') }}'
+              target:
+                area_id: '{{ target_area }}'
+              seconds: '{{ meta.get(''seconds'', 0) | int }}'
+          - alias: Sync UI Selector State to Off
+            action: mqtt.publish
+            data:
+              topic: homeassistant/select/{{ target_area }}/scene/state
+              retain: true
+              payload: "{{ {\n  \"scene_id\": 0,\n  \"scene_name\": \"Off\"\n} | tojson
+                }}"
+            enabled: false
+          - action: mqtt.publish
+            data:
+              topic: homeassistant/select/{{ target_area }}/scene/attributes
+              retain: true
+              payload: "{% set target_select = 'select.' ~ target_area ~ '_matrix_scene'
+                %}\n{% set current_history = state_attr(target_select, 'history_stack')
+                | default([], true) %}\n{% set local_options = state_attr(target_select,
+                'options') | default([], true) %}\n{{ {\n  \"options\": local_options,\n
+                \ \"scene\": {\n    \"scene_id\": 0,\n    \"scene_name\": \"Off\"\n
+                \ },\n  \"friendly_name\": state_attr(target_select, 'friendly_name'),\n
+                \ \"icon\": \"mdi:lightbulb-off\",\n  \"history_stack\": current_history\n}
+                | tojson }}"
+            enabled: false
+          else:
+          - event: area_registry_update
+            event_data:
+              action_type: area_registry_update
+              action: '{{ meta.get(''action'', ''remove'') }}'
+              domain: lighting
+              claimant_id: '{{ meta.get(''claimant_id'', payload.source_device) }}'
+              intent_type: '{{ meta.get(''intent_type'', ''active'') }}'
+              target:
+                area_id: '{{ target_area }}'
+              seconds: '{{ meta.get(''seconds'', 0) | int }}'
+      - action: logbook.log
+        data:
+          name: Light Engine
+          message: 'Light Call Source: {{ payload.source_device | default('''') }}
+            | Area: {{ area_name(target_area) }} | Label: {{ action_value[0] | default(''All'')
+            }} | color_temp_kelvin: {{ target_kelvin }}'
+          entity_id: '{{ lights_off[0] }}'
+        enabled: true
+    - conditions:
+      - alias: Lights Turn On No Target Scene
+        condition: template
+        value_template: '{{ action_type == ''turn_on''}}'
+      sequence:
+      - alias: Data Constants
+        variables:
+          current_posture: "{% set registry = state_attr('sensor.global_variable_registry',
+            'vars') \n   | default({}, true) %}\n{% set g_env = registry.get('globals',
+            {}).get('environmental', {}) %}\n\n{{ states(g_env.get('home_posture',
+            '') ) | default('disarmed') }}\n"
+          profile_sensor: sensor.{{ target_area }}_profile
+          profile_exists: '{{ states(profile_sensor) not in [''unknown'', ''unavailable'']
+            }}'
+          profile_features: '{{ state_attr(profile_sensor, ''features'') | default({},
+            true) }}'
+          use_night_settings: '{{ profile_features.get(''night_light'', false) and
+            current_posture in [''armed_night'',''armed_away'']}}
+
+            '
+          dim_factor: 20
+          command_map:
+            max:
+              brightness: 255
+            raise:
+              brightness_step: 35
+            lower:
+              brightness_step: -35
+            min:
+              brightness: 35
+            night_mode:
+              brightness: 35
+            day_mode:
+              brightness: 190
+            release:
+              brightness_step: 0
+            restore:
+              brightness: '{{ 35 if use_night_settings else 190 }}
+
+                '
+      - alias: Hardware Bucketing and Target Expansion (The "Engine")
+        variables:
+          resolved_targets: '{{ target_entities }}
+
+            '
+          target_br: "{% set current_cmd = command_map.get(action_value, {}) %} \n{%
+            if 'brightness_step' in current_cmd %}\n  {{ 255 if current_cmd.brightness_step
+            > 0 else -1 }}\n{% elif action_value is number or (action_value | is_number)
+            %}\n  {{ ([0, action_value | int, 255] | sort)[1] }}\n{% else %}\n  {{
+            current_cmd.get('brightness', 190) }}\n{% endif %}"
+          step_val: '{{ command_map.get(action_value, {}).get(''brightness_step'',
+            0) }}'
+          ikea_cct_lights: "{{ resolved_targets | expand \n  | selectattr('attributes.max_color_temp_kelvin',
+            'defined') \n  | selectattr('attributes.max_color_temp_kelvin', 'le',
+            4000) \n  | selectattr('attributes.supported_color_modes', 'defined')
+            \n  | selectattr('attributes.supported_color_modes', 'contains', 'color_temp')
+            \n  | map(attribute='entity_id') | list }}"
+          standard_cct_lights: "{{ resolved_targets \n  | reject('in', ikea_cct_lights)
+            \n  | expand \n  | selectattr('attributes.supported_color_modes', 'defined')
+            \n  | selectattr('attributes.supported_color_modes', 'contains', 'color_temp')
+            \n  | map(attribute='entity_id') | list }}"
+          dimmer_lights: '{{ resolved_targets | intersect(label_entities(''CurrentCTDimmer''))
+            | list }}'
+          binary_lights: "{{ resolved_targets | expand \n  | selectattr('attributes.supported_color_modes',
+            'defined') \n  | selectattr('attributes.supported_color_modes', 'eq',
+            ['onoff']) \n  | selectattr('state', 'eq', 'off') \n  | map(attribute='entity_id')
+            | list }}"
+          standard_lights: "{% set excluded = (ikea_cct_lights + standard_cct_lights
+            + dimmer_lights + binary_lights) | unique | list %}  {{ resolved_targets
+            \n  | reject('in', excluded) \n  | expand \n  | selectattr('state', 'eq',
+            'off') \n  | map(attribute='entity_id') | list }}"
+          publish_intent: '{{ (meta.get(''publish_intent'', ''none'') in [''add'',
+            ''remove'', ''lock''] or meta.get(''action'', ''none'') in [''add'', ''remove'',
+            ''lock''] ) and meta is defined }}'
+      - variables: {}
+      - parallel:
+        - if:
+          - condition: template
+            alias: Area has no matching labels. Action ignored.
+            value_template: '{{ label_light_entities | count > 0 and intersected |
+              count == 0 }}'
+          then:
+          - action: logbook.log
+            data:
+              name: GPE Intersection Error
+              message: 'Area ''{{ target_area }}'' has no lights matching labels:
+                {{ label_light_entities }}. Action ignored.'
+              entity_id: "{% set registry = state_attr('sensor.global_variable_registry',
+                'vars') | default({}, true) %}\n{% set g_logic = registry.globals.logic_engines
+                %}            \n        \n{{ g_logic.system_log | default('sensor.global_variable_registry')
+                }}"
+            enabled: true
+        - alias: IKEA CCT Turn On
+          if:
+          - condition: template
+            value_template: '{{ ikea_cct_lights | length > 0 }}'
+          then:
+          - action: light.turn_on
+            target:
+              entity_id: '{{ ikea_cct_lights }}'
+            data: '{% set base_data = {''color_temp_kelvin'': target_kelvin} %}
+
+
+              {{ dict(base_data, brightness_step=step_val) if step_val != 0 else
+
+              dict(base_data, brightness=target_br) if target_br != -1 else base_data
+              }}
+
+              '
+            enabled: true
+          - action: logbook.log
+            data:
+              name: Light Engine (On)
+              message: 'Light Call Source: {{ payload.source_device | default('''')
+                }} | Area: {{ area_name(target_area) }} | Label: {{ action_value[0]
+                | default(''All'') }} | color_temp_kelvin: {{ target_kelvin }} {{this.entity_id}}'
+              entity_id: '{{ ikea_cct_lights | first }}'
+            enabled: true
+        - alias: Standard CCT Turn On
+          if:
+          - condition: template
+            value_template: '{{ standard_cct_lights | length > 0 }}'
+          then:
+          - action: light.turn_on
+            target:
+              entity_id: '{{ standard_cct_lights }}'
+            data: "{% set base_data = {'color_temp_kelvin': target_kelvin} %} \n\n{{
+              dict(base_data, brightness_step=step_val) if step_val != 0 else\ndict(base_data,
+              brightness=target_br) if target_br != -1 else base_data }}\n"
+            enabled: true
+          - action: logbook.log
+            data:
+              name: Light Engine (On)
+              message: 'Light Call Source: {{ payload.source_device | default('''')
+                }} | Area: {{ area_name(target_area) }} | Label: {{ action_value[0]
+                | default(''All'') }} {{this.entity_id}}'
+              entity_id: '{{ standard_cct_lights | first }}'
+            enabled: true
+        - alias: Dimmer Lights Turn On
+          if:
+          - condition: template
+            value_template: '{{ dimmer_lights | length > 0 }}'
+          then:
+          - action: light.turn_on
+            target:
+              entity_id: '{{ dimmer_lights }}'
+            data:
+              brightness: '{{ target_br_dimmer | int(150) }}'
+            enabled: true
+          - action: logbook.log
+            data:
+              name: Light Engine (On)
+              message: 'Light Call Source: {{ payload.source_device | default('''')
+                }} | Area: {{ area_name(target_area) }} | Label: {{ action_value[0]
+                | default(''All'') }} {{this.entity_id}}'
+              entity_id: '{{ dimmer_lights | first }}'
+            enabled: true
+        - alias: Binary Lights Turn On
+          if:
+          - condition: template
+            value_template: '{{ binary_lights | length > 0 }}'
+          then:
+          - action: light.turn_on
+            target:
+              entity_id: '{{ binary_lights }}'
+            data: {}
+            enabled: true
+          - action: logbook.log
+            data:
+              name: Light Engine (On)
+              message: 'Light Call Source: {{ payload.source_device | default('''')
+                }} | Area: {{ area_name(target_area) }} | Label: {{ action_value[0]
+                | default(''All'') }} {{this.entity_id}}'
+              entity_id: '{{ binary_lights | first }}'
+            enabled: true
+        - alias: Standard Lights Turn On
+          if:
+          - condition: template
+            value_template: '{{ standard_lights | length > 0 }}'
+          then:
+          - action: light.turn_on
+            target:
+              entity_id: '{{ standard_lights }}'
+            data: '{% set base_data = {} %}
+
+
+              {{ dict(base_data, brightness_step=step_val) if step_val != 0 else
+
+              dict(base_data, brightness=target_br) if target_br != -1 else base_data
+              }}
+
+              '
+            enabled: true
+          - action: logbook.log
+            data:
+              name: Light Engine (On)
+              message: 'Light Call Source: {{ payload.source_device | default('''')
+                }} | Area: {{ area_name(target_area) }} | Label: {{ action_value[0]
+                | default(''All'') }} {{this.entity_id}}'
+              entity_id: '{{ standard_lights | first }}'
+            enabled: true
+        - alias: Synchronize Registry Stack on Valid Hardware Execution
+          if:
+          - alias: Ensure Hardware Was Actually Targetable
+            condition: template
+            value_template: '{{ publish_intent }}'
+          then:
+          - event: area_registry_update
+            event_data:
+              action: '{{ meta.get(''publish_intent'', ''add'') }}'
+              claimant_id: '{{ meta.get(''claimant_id'', payload.source_device) }}'
+              intent_type: '{{ meta.get(''intent_type'', ''active'') }}'
+              domain: lighting
+              target:
+                area_id: '{{ target_area }}'
+              seconds: '{{ meta.get(''seconds'', -1) | int }}'
+              metadata:
+                mode: target_call
+                brightness: '{{ target_br }}'
+                labels: '{{ action_value if action_value is list else [action_value]
+                  }}'
+                session_id: '{{ meta.get(''session_id'', ''none'') }}'
+        enabled: true
