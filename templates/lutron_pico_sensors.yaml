@@ -76,6 +76,50 @@ sensor:
             {{ ns.clean }}
           {% endif %}
         {% endif %}
+      touched_sessions: >
+        {# Initialize touched_sessions attribute map #}
+        {% set current_touches = state_attr('sensor.device_lock_registry', 'touched_sessions') or {} %}
+        {% set active_sessions = state_attr('sensor.device_lock_registry', 'active_sessions') or {} %}
+        
+        {% set device_id = trigger.event.data.device_id | default('unknown') %}
+        {% set event_ts = trigger.event.data.owned_ts | default(as_timestamp(trigger.event.time_fired)) | round(3) %}
+        {% set is_incoming_claim = trigger.event.data.isOwned | bool(false) %}
+        {% set existing_lock = active_sessions.get(device_id, {}) %}
+
+        {# Purge stale touch records for devices that no longer have an active lock #}
+        {% set ns_touch = namespace(clean={}) %}
+        {% for d_id, data in current_touches.items() %}
+          {% if d_id in active_sessions %}
+            {% set ns_touch.clean = dict(ns_touch.clean, **{d_id: data}) %}
+          {% endif %}
+        {% endfor %}
+
+        {% if is_incoming_claim %}
+          {% if existing_lock.get('isOwned', false) and event_ts > existing_lock.get('ts', 0) %}
+            {# RE-ENTRY / TOUCH DETECTED while lock is currently held #}
+            {% set prev_touch = ns_touch.clean.get(device_id, {}) %}
+            {% set count = prev_touch.get('touch_count', 0) + 1 %}
+            
+            {% set updated_touch = {
+              device_id: {
+                'last_touched_ts': event_ts,
+                'last_session_id': trigger.event.context.id | default('unknown'),
+                'touch_count': count
+              }
+            } %}
+            {{ dict(ns_touch.clean, **updated_touch) }}
+          {% else %}
+            {# Initial claim or stale claim: maintain or set baseline #}
+            {{ ns_touch.clean }}
+          {% endif %}
+        {% else %}
+          {# RELEASE PATH: Clean touch entry for released device #}
+          {% set ns_touch_final = namespace(output={}) %}
+          {% for d_id, data in ns_touch.clean.items() if d_id != device_id %}
+            {% set ns_touch_final.output = dict(ns_touch_final.output, **{d_id: data}) %}
+          {% endfor %}
+          {{ ns_touch_final.output }}
+        {% endif %}
       # active_sessions: >
       #   {# 1. Initialize State #}
       #   {% set current = state_attr('sensor.pico_registry', 'active_sessions') or {} %}
